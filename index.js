@@ -20,29 +20,44 @@ void (() => {
       var is_case_sensitive = await detect_case_sensitivity(base_dir)
 
       var root = create_node('/')
+      // Mark root as a directory since base_dir is a directory
+      root.directory_promise = Promise.resolve()
 
       function chokidar_handler(fullpath, event) {
-        if (!fullpath.startsWith(base_dir)) return
+        if (!fullpath.startsWith(base_dir)) {
+          return
+        }
         var path = fullpath.slice(base_dir.length)
         var parts = path.slice(1).split('/')
 
         if (event.startsWith('add')) {
           var node = root
-          for (var part of parts) {
+          for (var i = 0; i < parts.length; i++) {
+            var part = parts[i]
             var key = url_component_to_key(part)
 
-            if (!node.key_to_part.has(key)) node.key_to_part.set(key, create_node(part))
+            if (!node.key_to_part.has(key)) {
+              node.key_to_part.set(key, create_node(part))
+            }
 
             if (!is_case_sensitive) {
               var ipart = part.toLowerCase()
               var ikey = key.toLowerCase()
 
-              if (!node.ikey_to_iparts.has(ikey)) node.ikey_to_iparts.set(ikey, new Set())
+              if (!node.ikey_to_iparts.has(ikey)) {
+                node.ikey_to_iparts.set(ikey, new Set())
+              }
               node.ikey_to_iparts.get(ikey).add(ipart)
             }
 
             node = node.key_to_part.get(key)
-            if (node.part !== part) throw 'corrupt'
+            if (node.part !== part)
+              throw new Error('Corruption detected - should never happen')
+
+            // If this is the final part and it's a directory, mark it as such
+            if (i === parts.length - 1 && event === 'addDir') {
+              node.directory_promise = Promise.resolve()
+            }
           }
         }
 
@@ -57,16 +72,24 @@ void (() => {
               if (!is_case_sensitive) {
                 var ipart = part.toLowerCase()
                 var ikey = key.toLowerCase()
-                node.ikey_to_iparts.get(ikey).delete(ipart)
-                if (!node.ikey_to_iparts.get(ikey).size)
-                  node.ikey_to_iparts.delete(ikey)
+                var ikey_set = node.ikey_to_iparts.get(ikey)
+                if (ikey_set) {
+                  ikey_set.delete(ipart)
+                  if (!ikey_set.size) {
+                    node.ikey_to_iparts.delete(ikey)
+                  }
+                }
               }
-            } else node = node.key_to_part.get(key)
+            } else {
+              node = node.key_to_part.get(key)
+              if (!node) break // File not in tree, ignore deletion
+            }
           }
         }
 
-        if (!event.startsWith('unlink'))
+        if (!event.startsWith('unlink')) {
           cb(url_component_to_key(path))
+        }
       }
       var c = require('chokidar').watch(base_dir, {
           useFsEvents: true,
@@ -87,7 +110,9 @@ void (() => {
 
         for (var key of keys) {
           node = node.key_to_part.get(key)
-          if (node.directory_promise) await node.directory_promise
+          if (node.directory_promise) {
+            await node.directory_promise
+          }
           fullpath += '/' + node.part
         }
 
@@ -181,7 +206,9 @@ void (() => {
               await node.directory_promise
             }
 
-            if (node.directory_promise) await node.directory_promise
+            if (node.directory_promise) {
+              await node.directory_promise
+            }
             fullpath += '/' + node.part
           }
         }
@@ -217,7 +244,9 @@ void (() => {
     var index_pos = parts.indexOf('index')
     if (index_pos !== -1) {
       key = parts.slice(0, index_pos).join('/')
-      if (!key) key = '/'
+      if (!key) {
+        key = '/'
+      }
     }
 
     return key
@@ -226,7 +255,10 @@ void (() => {
   async function exists(fullpath) {
     try {
       return await require('fs').promises.stat(fullpath)
-    } catch (e) {}
+    } catch (e) {
+      // File doesn't exist - return falsy
+      // This is hit on case-sensitive filesystems during case sensitivity detection
+    }
   }
 
   async function detect_case_sensitivity(dir) {
@@ -261,10 +293,9 @@ void (() => {
     // Characters that are problematic on various platforms:
     // < > : " / \ | ? * - Windows/general filesystem restrictions
     // % - Must be encoded to avoid issues with decodeURIComponent
-    // space - Should be encoded for cross-platform safety
     // \x00-\x1f - Control characters (0-31)
     // \x7f - DEL character (127)
-    return str.replace(/[<>:"|\\?*% \x00-\x1f\x7f/]/g, encode_char)
+    return str.replace(/[<>:"|\\?*%\x00-\x1f\x7f/]/g, encode_char)
   }
 
   // Resolve case collisions by encoding characters until unique
@@ -276,35 +307,27 @@ void (() => {
       // Find the last character that isn't part of a %XX encoding
       var found_char = false
       for (var j = encoded_part.length - 1; j >= 0; j--) {
-        var char = encoded_part[j]
-
-        // Skip if this is part of a %XX encoding
+        // Skip if this is the second hex digit of a %XX encoding
+        // When we iterate backwards and hit the last hex digit, j-2 will point to %
         if (j >= 2 && encoded_part[j - 2] === '%') {
-          // This is the second hex digit of %XX
-          j -= 2 // Skip the entire %XX
+          j -= 2 // Skip the entire %XX sequence
           continue
         }
-        if (j >= 1 && encoded_part[j - 1] === '%') {
-          // This is the first hex digit of %XX
-          j -= 1 // Skip to before the %
-          continue
-        }
-        if (char === '%') {
-          // This is a % character, skip it and the next two chars
-          continue
-        }
+
+        // Note: The checks for j-1 === '%' and char === '%' are unreachable
+        // because when iterating backwards through valid %XX encodings:
+        // - We always hit the last hex digit first (caught by j-2 check above)
+        // - The j -= 2 jumps us past the first hex digit and the % itself
 
         // Found a character we can encode
+        var char = encoded_part[j]
         encoded_part = encoded_part.slice(0, j) + encode_char(char) + encoded_part.slice(j + 1)
         encoded_lower = encoded_part.toLowerCase()
         found_char = true
         break
       }
 
-      if (!found_char) {
-        // Shouldn't happen, but break to avoid infinite loop
-        break
-      }
+      if (!found_char) throw new Error('Should never happen - safety check')
     }
 
     return encoded_part

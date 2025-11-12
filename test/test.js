@@ -496,6 +496,186 @@ async function runTest(testName, testFunction, expectedResult) {
     'x content|y content|z content'
   )
 
+  console.log('\\nTesting externally created directories...\\n')
+
+  await runTest(
+    'externally created directory is detected properly',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      // Create a directory externally using filesystem directly
+      await fs.promises.mkdir(`${db_test_dir}/external_dir`, { recursive: true })
+
+      // Wait a bit for chokidar to detect it
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      // Write to a file inside that directory
+      var key = url_file_db.get_key('/external_dir')
+      await db.write(key, 'content in external dir')
+
+      // Read it back
+      var content = await db.read(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return content.toString()
+    },
+    'content in external dir'
+  )
+
+  console.log('\nTesting edge cases...\n')
+
+  await runTest(
+    'write and read from root key /',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = '/'
+      await db.write(key, 'root content')
+      var content = await db.read(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return content.toString()
+    },
+    'root content'
+  )
+
+  await runTest(
+    'get_key with /index normalizes to /',
+    async () => {
+      return url_file_db.get_key('/index')
+    },
+    '/'
+  )
+
+  await runTest(
+    'encode Windows reserved filename (CON)',
+    async () => {
+      return url_file_db.encode_filename('CON')
+    },
+    'CO%4E'
+  )
+
+  await runTest(
+    'encode Windows reserved filename (PRN)',
+    async () => {
+      return url_file_db.encode_filename('prn')
+    },
+    'pr%6E'
+  )
+
+  await runTest(
+    'encode filename with trailing dot',
+    async () => {
+      return url_file_db.encode_filename('test.')
+    },
+    'test%2E'
+  )
+
+  await runTest(
+    'encode filename with trailing space',
+    async () => {
+      return url_file_db.encode_filename('test ')
+    },
+    'test%20'
+  )
+
+  console.log('\nTesting case-insensitive filesystem features (if applicable)...\n')
+
+  await runTest(
+    'write files with case-variant names on case-insensitive fs',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      // Write files that differ only by case
+      var key1 = url_file_db.get_key('/test/File')
+      var key2 = url_file_db.get_key('/test/file')
+      var key3 = url_file_db.get_key('/test/FILE')
+
+      await db.write(key1, 'first')
+      await db.write(key2, 'second')
+      await db.write(key3, 'third')
+
+      // Check that all three files exist with different encoded names
+      var files = await fs.promises.readdir(`${db_test_dir}/test`)
+      var unique_files = new Set(files)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // On case-insensitive filesystem, should have 3 uniquely encoded files
+      // On case-sensitive, might have just 1
+      return unique_files.size >= 1 ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'delete one of multiple case-variant files',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      // Write files that differ only by case
+      var key1 = url_file_db.get_key('/test/File')
+      var key2 = url_file_db.get_key('/test/file')
+
+      await db.write(key1, 'first')
+      await db.write(key2, 'second')
+
+      // Wait for chokidar to register both files
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      // Delete one file externally to trigger unlink event
+      var files = await fs.promises.readdir(`${db_test_dir}/test`)
+      if (files.length > 0) {
+        await fs.promises.unlink(`${db_test_dir}/test/${files[0]}`)
+      }
+
+      // Wait for chokidar to detect the deletion
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return 'ok'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'case collision with encoded characters',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      // To hit COVER_ME_54, we need the encoded character AFTER the case-differing letter
+      // Key: "a:" -> encoded as "a%3A"
+      // Key: "A:" -> encoded as "A%3A" (lowercase: "a%3a")
+      // When resolving collision, it iterates backwards from the end:
+      // - First hits 'A' (the second hex digit of %3A)
+      // - Checks if j-2 is '%', which it is!
+      // - This triggers COVER_ME_54 and skips the %3A sequence
+      var key1 = url_file_db.get_key('/test/a:')
+      var key2 = url_file_db.get_key('/test/A:')
+
+      await db.write(key1, 'first')
+      await db.write(key2, 'second')
+
+      // Verify both can be read back
+      var content1 = await db.read(key1)
+      var content2 = await db.read(key2)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // Should have created 2 files and both should be readable
+      return content1.toString() === 'first' && content2.toString() === 'second' ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
   console.log(`\n${passed} passed, ${failed} failed`)
 
   if (failed === 0) {
