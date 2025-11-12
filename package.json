@@ -1,0 +1,13 @@
+{
+  "name": "url-file-db",
+  "version": "0.0.1",
+  "description": "Maps web URLs to filesystem paths with encoding and normalization",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test/test.js"
+  },
+  "author": "Braid Working Group",
+  "dependencies": {
+    "chokidar": "^3.5.3"
+  }
+}
