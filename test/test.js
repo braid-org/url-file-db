@@ -676,6 +676,60 @@ async function runTest(testName, testFunction, expectedResult) {
     'ok'
   )
 
+  await runTest(
+    'read nonexistent file returns null',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var result = await db.read('/nonexistent/file.txt')
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return result === null ? 'null' : 'not-null'
+    },
+    'null'
+  )
+
+  await runTest(
+    'failed read does not poison promise chain',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = url_file_db.get_key('/test/file.txt')
+
+      // Write a file
+      await db.write(key, 'initial content')
+
+      // Read it successfully
+      var content1 = await db.read(key)
+
+      // Delete the file externally
+      await fs.promises.unlink(`${db_test_dir}/test/file.txt`)
+
+      // Wait for chokidar to notice
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      // Try to read the deleted file - should return null, not throw
+      var content2 = await db.read(key)
+
+      // Now write to the same key again - this should work despite the failed read
+      await db.write(key, 'new content')
+
+      // And read it back successfully
+      var content3 = await db.read(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // Verify: first read worked, second was null, third worked after re-write
+      return content1.toString() === 'initial content' &&
+             content2 === null &&
+             content3.toString() === 'new content' ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
   console.log(`\n${passed} passed, ${failed} failed`)
 
   if (failed === 0) {

@@ -110,6 +110,8 @@ void (() => {
 
         for (var key of keys) {
           node = node.key_to_part.get(key)
+          // Node doesn't exist in tree - file not found
+          if (!node) return null
           if (node.directory_promise) {
             await node.directory_promise
           }
@@ -123,7 +125,12 @@ void (() => {
 
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
-          return await db._readFile(fullpath)
+          try {
+            return await db._readFile(fullpath)
+          } catch (e) {
+            // File doesn't exist or can't be read - return null
+            return null
+          }
         }))
       }
 
