@@ -99,29 +99,20 @@ void (() => {
         c.on(e, x => chokidar_handler(x, e))
 
       db.read = async key => {
-        var keys = key.slice(1).split('/')
+        var keys = key.match(/[^/]+/g) || []
         var node = root
         var fullpath = base_dir
-
-        // Handle root key "/" - after slice(1) we get empty string, which splits to ['']
-        if (keys.length === 1 && keys[0] === '') {
-          keys = []
-        }
 
         for (var key of keys) {
           node = node.key_to_part.get(key)
           // Node doesn't exist in tree - file not found
           if (!node) return null
-          if (node.directory_promise) {
-            await node.directory_promise
-          }
+          if (node.directory_promise) await node.directory_promise
           fullpath += '/' + node.part
         }
 
         // If the node is a directory, read from the index file inside it
-        if (node.directory_promise) {
-          fullpath += '/index'
-        }
+        if (node.directory_promise) fullpath += '/index'
 
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
@@ -135,17 +126,11 @@ void (() => {
       }
 
       db.write = async (key, stuff) => {
-        var keys = key.slice(1).split('/')
-
-        // Handle root key "/" - after slice(1) we get empty string, which splits to ['']
-        if (keys.length === 1 && keys[0] === '') {
-          keys = []
-        }
-
-        // Build path and create missing directories/nodes
+        var keys = key.match(/[^/]+/g) || []
         var node = root
         var fullpath = base_dir
 
+        // Build path and create missing directories/nodes
         for (var i = 0; i < keys.length; i++) {
           var key_part = keys[i]
 
@@ -213,17 +198,13 @@ void (() => {
               await node.directory_promise
             }
 
-            if (node.directory_promise) {
-              await node.directory_promise
-            }
+            if (node.directory_promise) await node.directory_promise
             fullpath += '/' + node.part
           }
         }
 
         // If the node is a directory, write to the index file inside it
-        if (node.directory_promise) {
-          fullpath += '/index'
-        }
+        if (node.directory_promise) fullpath += '/index'
 
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
