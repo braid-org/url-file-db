@@ -125,6 +125,66 @@ void (() => {
         }))
       }
 
+      db.delete = async key => {
+        var keys = key.match(/[^/]+/g) || []
+
+        // Navigate to the parent node
+        var node = root
+        var fullpath = base_dir
+        var parent_node = null
+        var last_key = null
+
+        for (var i = 0; i < keys.length; i++) {
+          var key_part = keys[i]
+          parent_node = node
+          last_key = key_part
+          node = node.key_to_part.get(key_part)
+
+          // Node doesn't exist in tree - file not found
+          if (!node) return false
+
+          if (node.directory_promise) await node.directory_promise
+          fullpath += '/' + node.part
+        }
+
+        // If the node is a directory, delete the index file inside it
+        if (node.directory_promise) {
+          fullpath += '/index'
+        }
+
+        // Serialize on the node's promise chain
+        return await (node.promise_chain = node.promise_chain.then(async () => {
+          try {
+            // Only remove node from parent's tree if it's not a directory
+            // Directories may have other children, so we keep the node
+            if (!node.directory_promise && parent_node && last_key) {
+              parent_node.key_to_part.delete(last_key)
+
+              // Clean up case-insensitive tracking
+              if (!is_case_sensitive) {
+                var ikey = last_key.toLowerCase()
+                var ipart = node.part.toLowerCase()
+                var ikey_set = parent_node.ikey_to_iparts.get(ikey)
+                if (ikey_set) {
+                  ikey_set.delete(ipart)
+                  if (!ikey_set.size) {
+                    parent_node.ikey_to_iparts.delete(ikey)
+                  }
+                }
+              }
+            }
+
+            // Delete the file from filesystem
+            await db._unlink(fullpath)
+
+            return true
+          } catch (e) {
+            // File doesn't exist or can't be deleted
+            return false
+          }
+        }))
+      }
+
       db.write = async (key, stuff) => {
         var keys = key.match(/[^/]+/g) || []
         var node = root

@@ -583,6 +583,153 @@ async function runTest(testName, testFunction, expectedResult) {
     'test%20'
   )
 
+  console.log('\nTesting db.delete...\n')
+
+  await runTest(
+    'delete existing file',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = url_file_db.get_key('/test/file.txt')
+      await db.write(key, 'content to delete')
+
+      var result = await db.delete(key)
+      var read_result = await db.read(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return result === true && read_result === null ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'delete nonexistent file returns false',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var result = await db.delete('/nonexistent/file.txt')
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return result === false ? 'false' : 'true'
+    },
+    'false'
+  )
+
+  await runTest(
+    'delete file then write to same key',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = url_file_db.get_key('/test/file.txt')
+      await db.write(key, 'first content')
+      await db.delete(key)
+      await db.write(key, 'second content')
+      var content = await db.read(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return content.toString()
+    },
+    'second content'
+  )
+
+  await runTest(
+    'delete file from directory structure',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key1 = url_file_db.get_key('/a/b/c')
+      var key2 = url_file_db.get_key('/a/b/d')
+
+      await db.write(key1, 'content c')
+      await db.write(key2, 'content d')
+      await db.delete(key1)
+
+      var c_content = await db.read(key1)
+      var d_content = await db.read(key2)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return c_content === null && d_content.toString() === 'content d' ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'delete directory (via index file)',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key_a = url_file_db.get_key('/a')
+      var key_ab = url_file_db.get_key('/a/b')
+
+      // Create /a as file, then /a/b to convert it to directory
+      await db.write(key_a, 'a content')
+      await db.write(key_ab, 'b content')
+
+      // Delete /a (which deletes the index file)
+      var delete_result = await db.delete(key_a)
+      var read_a = await db.read(key_a)
+      var read_ab = await db.read(key_ab)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return delete_result === true && read_a === null && read_ab.toString() === 'b content' ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'concurrent deletes are serialized',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = url_file_db.get_key('/test/file.txt')
+      await db.write(key, 'content')
+
+      // Try to delete the same file twice concurrently
+      var results = await Promise.all([
+        db.delete(key),
+        db.delete(key)
+      ])
+
+      // One should succeed (true), one should fail (false)
+      var has_true = results.includes(true)
+      var has_false = results.includes(false)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return has_true && has_false ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'delete root key /',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = '/'
+      await db.write(key, 'root content')
+      var delete_result = await db.delete(key)
+      var read_result = await db.read(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return delete_result === true && read_result === null ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
   console.log('\nTesting case-insensitive filesystem features (if applicable)...\n')
 
   await runTest(
