@@ -877,6 +877,115 @@ async function runTest(testName, testFunction, expectedResult) {
     'ok'
   )
 
+  console.log('\nTesting callback behavior...\n')
+
+  await runTest(
+    'callback should never receive empty string key',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var received_keys = []
+      var db = await url_file_db.create(db_test_dir, (key) => {
+        received_keys.push(key)
+      })
+
+      // Write to root
+      await db.write('/', 'root content')
+
+      // Wait for chokidar to trigger callback
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // Check that no empty string was received
+      var has_empty_string = received_keys.includes('')
+      return has_empty_string ? 'has-empty' : 'ok'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'callback should send /a when /a/index changes',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var received_keys = []
+      var db = await url_file_db.create(db_test_dir, (key) => {
+        received_keys.push(key)
+      })
+
+      // Create /a/index externally
+      await fs.promises.mkdir(`${db_test_dir}/a`, { recursive: true })
+      await fs.promises.writeFile(`${db_test_dir}/a/index`, 'content')
+
+      // Wait for chokidar to trigger callbacks
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // Filter out the directory creation event, look for file events
+      var file_keys = received_keys.filter(k => k !== '' && !k.endsWith('/'))
+      var has_correct_key = file_keys.includes('/a')
+      var has_incorrect_key = file_keys.includes('/a/index')
+
+      return has_correct_key && !has_incorrect_key ? 'ok' : `got: ${file_keys.join(',')}`
+    },
+    'ok'
+  )
+
+  await runTest(
+    'callback should send / when /index changes',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var received_keys = []
+      var db = await url_file_db.create(db_test_dir, (key) => {
+        received_keys.push(key)
+      })
+
+      // Create /index externally
+      await fs.promises.writeFile(`${db_test_dir}/index`, 'content')
+
+      // Wait for chokidar to trigger callback
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // Should receive '/' not '' or '/index'
+      var has_root = received_keys.includes('/')
+      var has_empty = received_keys.includes('')
+      var has_index = received_keys.includes('/index')
+
+      return has_root && !has_empty && !has_index ? 'ok' : `got: ${received_keys.join(',')}`
+    },
+    'ok'
+  )
+
+  await runTest(
+    'callback should send /a/b when /a/b/index changes',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var received_keys = []
+      var db = await url_file_db.create(db_test_dir, (key) => {
+        received_keys.push(key)
+      })
+
+      // Create /a/b/index externally
+      await fs.promises.mkdir(`${db_test_dir}/a/b`, { recursive: true })
+      await fs.promises.writeFile(`${db_test_dir}/a/b/index`, 'content')
+
+      // Wait for chokidar to trigger callbacks
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // Filter to get file events only
+      var file_keys = received_keys.filter(k => k !== '' && !k.endsWith('/'))
+      var has_correct_key = file_keys.includes('/a/b')
+      var has_incorrect_key = file_keys.includes('/a/b/index')
+
+      return has_correct_key && !has_incorrect_key ? 'ok' : `got: ${file_keys.join(',')}`
+    },
+    'ok'
+  )
+
   console.log(`\n${passed} passed, ${failed} failed`)
 
   if (failed === 0) {

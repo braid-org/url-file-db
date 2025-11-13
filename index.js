@@ -24,7 +24,7 @@ void (() => {
       root.directory_promise = Promise.resolve()
 
       function chokidar_handler(fullpath, event) {
-        if (!fullpath.startsWith(base_dir)) {
+        if (!fullpath.startsWith(base_dir + '/')) {
           return
         }
         var path = fullpath.slice(base_dir.length)
@@ -88,7 +88,13 @@ void (() => {
         }
 
         if (!event.startsWith('unlink')) {
-          cb(url_component_to_key(path))
+          var key = url_component_to_key(path)
+          // Normalize /index to / and /a/index to /a
+          if (key.endsWith('/index')) {
+            key = key.slice(0, -6) // Remove '/index'
+            if (!key) key = '/'
+          }
+          cb(key)
         }
       }
       var c = require('chokidar').watch(base_dir, {
