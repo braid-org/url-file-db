@@ -986,6 +986,92 @@ async function runTest(testName, testFunction, expectedResult) {
     'ok'
   )
 
+  await runTest(
+    'callback should NOT be triggered when directories are created (external)',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var received_keys = new Set()
+      await url_file_db.create(db_test_dir, (key) => {
+        received_keys.add(key)
+      })
+
+      // Create directories externally (should NOT trigger callbacks)
+      await fs.promises.mkdir(`${db_test_dir}/dir1`, { recursive: true })
+      await fs.promises.mkdir(`${db_test_dir}/dir2/subdir`, { recursive: true })
+
+      // Wait for chokidar to detect the directory additions
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      // Now create a file (SHOULD trigger callback)
+      await fs.promises.writeFile(`${db_test_dir}/testfile.txt`, 'content')
+
+      // Wait for chokidar to detect the file addition
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // We should only have received the callback for the file, not the directories
+      // Expected: only '/testfile.txt'
+      return received_keys.size === 1 && received_keys.has('/testfile.txt') ? 'ok' : `got [${received_keys.size}]: ${[...received_keys.keys()].join(', ')}`
+    },
+    'ok'
+  )
+
+  await runTest(
+    'callback should NOT be triggered when db.write creates intermediate directories',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var received_keys = new Set()
+      var db = await url_file_db.create(db_test_dir, (key) => {
+        received_keys.add(key)
+      })
+
+      // Write a file deep in a directory structure
+      // This will create intermediate directories a, a/b, a/b/c
+      await db.write('/a/b/c/file.txt', 'content')
+
+      // Wait for chokidar to detect all the filesystem changes
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // We should NOT receive any callbacks from db.write operations
+      return received_keys.size === 0 ? 'ok' : `got [${received_keys.size}]: ${[...received_keys.keys()].join(', ')}`
+    },
+    'ok'
+  )
+
+  await runTest(
+    'callback should NOT be triggered for db.write operations',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var received_keys = new Set()
+      var db = await url_file_db.create(db_test_dir, (key) => {
+        received_keys.add(key)
+      })
+
+      // Write some files using db.write
+      await db.write('/test/file1.txt', 'content1')
+      await db.write('/test/file2.txt', 'content2')
+      await db.write('/another/file.txt', 'content3')
+
+      // Wait for chokidar to potentially trigger callbacks
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Now write a file externally (this SHOULD trigger callback)
+      await fs.promises.writeFile(`${db_test_dir}/external.txt`, 'external content')
+
+      // Wait for chokidar to detect the external write
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      // We should only receive the callback for the externally written file
+      return received_keys.size === 1 && received_keys.has('/external.txt') ? 'ok' : `got [${received_keys.size}]: ${[...received_keys.keys()].join(', ')}`
+    },
+    'ok'
+  )
+
   console.log(`\n${passed} passed, ${failed} failed`)
 
   if (failed === 0) {

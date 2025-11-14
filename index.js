@@ -19,6 +19,10 @@ void (() => {
 
       var is_case_sensitive = await detect_case_sensitivity(base_dir)
 
+      // Track keys with anticipated events from db.write operations
+      // These events should not trigger the user callback
+      var anticipated_events = new Set()
+
       var root = create_node('/')
       // Mark root as a directory since base_dir is a directory
       root.directory_promise = Promise.resolve()
@@ -87,14 +91,18 @@ void (() => {
           }
         }
 
-        if (!event.startsWith('unlink')) {
+        if (event === 'add' || event === 'change') {
           var key = url_component_to_key(path)
           // Normalize /index to / and /a/index to /a
           if (key.endsWith('/index')) {
             key = key.slice(0, -6) // Remove '/index'
             if (!key) key = '/'
           }
-          cb(key)
+
+          // Don't call callback if this event was anticipated from db.write
+          if (!anticipated_events.has(key)) {
+            cb(key)
+          }
         }
       }
       var c = require('chokidar').watch(base_dir, {
@@ -274,8 +282,17 @@ void (() => {
 
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
+          // Add this key to anticipated events before writing
+          anticipated_events.add(key)
+
           // Write the file
           await db._writeFile(fullpath, stuff)
+
+          // Remove from anticipated events after enough time for chokidar to detect it
+          // Using 1000ms to be safe with various filesystem delays
+          setTimeout(() => {
+            anticipated_events.delete(key)
+          }, 1000)
         }))
       }
 
