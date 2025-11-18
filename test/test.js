@@ -81,6 +81,29 @@ async function runTest(testName, testFunction, expectedResult) {
   console.log('Testing db operations...\n')
 
   await runTest(
+    'create db without callback',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir)
+
+      var key = url_file_db.get_key('/test/file.txt')
+      await db.write(key, 'content without callback')
+      var content = await db.read(key)
+
+      // Write a file externally to trigger chokidar event (which would call cb if it exists)
+      await fs.promises.writeFile(`${db_test_dir}/external.txt`, 'external')
+
+      // Wait for chokidar to detect it
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return content.toString()
+    },
+    'content without callback'
+  )
+
+  await runTest(
     'get_key from URL',
     async () => {
       return url_file_db.get_key('/hello/world')

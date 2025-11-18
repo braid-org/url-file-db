@@ -101,7 +101,7 @@ void (() => {
 
           // Don't call callback if this event was anticipated from db.write
           if (!anticipated_events.has(key)) {
-            cb(key)
+            if (cb) cb(key)
           }
         }
       }
