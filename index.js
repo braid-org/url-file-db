@@ -1,14 +1,40 @@
 
 void (() => {
 
+  // =============================================================================
+  // url-file-db
+  // =============================================================================
+  //
+  // Maps web URLs to filesystem paths with proper encoding and normalization.
+  // Supports treating paths as both files and directories through an index file
+  // convention.
+  //
+  // =============================================================================
+
+  // -----------------------------------------------------------------------------
+  // Imports
+  // -----------------------------------------------------------------------------
+
+  var {
+    decode_canonical_path,
+    decode_file_path_component,
+    file_path_to_canonical_path,
+    url_path_to_canonical_path,
+    resolve_case_collision,
+    encode_file_path_component
+  } = require('./canonical_path')
+
+  // -----------------------------------------------------------------------------
   // Main API
+  // -----------------------------------------------------------------------------
+
   url_file_db = {
     create: async (base_dir, cb) => {
       var db = {}
 
       base_dir = require('path').resolve(base_dir)
 
-      // Set filesystem operations once
+      // Bind filesystem operations
       var fs = require('fs').promises
       db._readFile = fs.readFile.bind(fs)
       db._writeFile = fs.writeFile.bind(fs)
@@ -19,92 +45,99 @@ void (() => {
 
       var is_case_sensitive = await detect_case_sensitivity(base_dir)
 
-      // Track keys with anticipated events from db.write operations
+      // Track canonical_paths with anticipated events from db.write operations
       // These events should not trigger the user callback
       var anticipated_events = new Set()
 
+      // Initialize root node
       var root = create_node('/')
-      // Mark root as a directory since base_dir is a directory
       root.directory_promise = Promise.resolve()
+
+      // -------------------------------------------------------------------------
+      // File Watcher
+      // -------------------------------------------------------------------------
 
       function chokidar_handler(fullpath, event) {
         if (!fullpath.startsWith(base_dir + '/')) {
           return
         }
-        var path = fullpath.slice(base_dir.length)
-        var parts = path.slice(1).split('/')
+        var file_path = fullpath.slice(base_dir.length)
+        var file_path_components = file_path.slice(1).split('/')
 
+        // Handle add/addDir events - build the node tree
         if (event.startsWith('add')) {
           var node = root
-          for (var i = 0; i < parts.length; i++) {
-            var part = parts[i]
-            var key = url_component_to_key(part)
+          for (var i = 0; i < file_path_components.length; i++) {
+            var file_path_component = file_path_components[i]
+            var component = decode_file_path_component(file_path_component)
 
-            if (!node.key_to_part.has(key)) {
-              node.key_to_part.set(key, create_node(part))
+            // Create node if it doesn't exist
+            if (!node.component_to_node.has(component)) {
+              node.component_to_node.set(component, create_node(file_path_component))
             }
 
+            // Track case-insensitive mappings
             if (!is_case_sensitive) {
-              var ipart = part.toLowerCase()
-              var ikey = key.toLowerCase()
+              var ifile_path_component = file_path_component.toLowerCase()
+              var icomponent = component.toLowerCase()
 
-              if (!node.ikey_to_iparts.has(ikey)) {
-                node.ikey_to_iparts.set(ikey, new Set())
+              if (!node.icomponent_to_ifile_path_components.has(icomponent)) {
+                node.icomponent_to_ifile_path_components.set(icomponent, new Set())
               }
-              node.ikey_to_iparts.get(ikey).add(ipart)
+              node.icomponent_to_ifile_path_components.get(icomponent).add(ifile_path_component)
             }
 
-            node = node.key_to_part.get(key)
-            if (node.part !== part)
+            node = node.component_to_node.get(component)
+            if (node.file_path_component !== file_path_component)
               throw new Error('Corruption detected - should never happen')
 
-            // If this is the final part and it's a directory, mark it as such
-            if (i === parts.length - 1 && event === 'addDir') {
+            // Mark directories
+            if (i === file_path_components.length - 1 && event === 'addDir') {
               node.directory_promise = Promise.resolve()
             }
           }
         }
 
+        // Handle unlink/unlinkDir events - remove from node tree
         if (event.startsWith('unlink')) {
           var node = root
-          for (var i = 0; i < parts.length; i++) {
-            var part = parts[i]
-            var key = url_component_to_key(part)
-            if (i === parts.length - 1) {
-              node.key_to_part.delete(key)
+          for (var i = 0; i < file_path_components.length; i++) {
+            var file_path_component = file_path_components[i]
+            var component = decode_file_path_component(file_path_component)
+            if (i === file_path_components.length - 1) {
+              // Remove from component map
+              node.component_to_node.delete(component)
 
+              // Clean up case-insensitive tracking
               if (!is_case_sensitive) {
-                var ipart = part.toLowerCase()
-                var ikey = key.toLowerCase()
-                var ikey_set = node.ikey_to_iparts.get(ikey)
-                if (ikey_set) {
-                  ikey_set.delete(ipart)
-                  if (!ikey_set.size) {
-                    node.ikey_to_iparts.delete(ikey)
+                var ifile_path_component = file_path_component.toLowerCase()
+                var icomponent = component.toLowerCase()
+                var icomponent_set = node.icomponent_to_ifile_path_components.get(icomponent)
+                if (icomponent_set) {
+                  icomponent_set.delete(ifile_path_component)
+                  if (!icomponent_set.size) {
+                    node.icomponent_to_ifile_path_components.delete(icomponent)
                   }
                 }
               }
             } else {
-              node = node.key_to_part.get(key)
-              if (!node) break // File not in tree, ignore deletion
+              node = node.component_to_node.get(component)
+              if (!node) break
             }
           }
         }
 
+        // Notify callback for file changes
         if (event === 'add' || event === 'change') {
-          var key = url_component_to_key(path)
-          // Normalize /index to / and /a/index to /a
-          if (key.endsWith('/index')) {
-            key = key.slice(0, -6) // Remove '/index'
-            if (!key) key = '/'
-          }
+          var canonical_path = file_path_to_canonical_path(file_path)
 
           // Don't call callback if this event was anticipated from db.write
-          if (!anticipated_events.has(key)) {
-            if (cb) cb(key)
+          if (!anticipated_events.has(canonical_path)) {
+            if (cb) cb(canonical_path)
           }
         }
       }
+
       var c = require('chokidar').watch(base_dir, {
           useFsEvents: true,
           usePolling: false,
@@ -112,20 +145,24 @@ void (() => {
       for (let e of ['add', 'addDir', 'change', 'unlink', 'unlinkDir'])
         c.on(e, x => chokidar_handler(x, e))
 
-      db.read = async key => {
-        var keys = key.match(/[^/]+/g) || []
+      // -------------------------------------------------------------------------
+      // db.read
+      // -------------------------------------------------------------------------
+
+      db.read = async canonical_path => {
+        var components = decode_canonical_path(canonical_path)
         var node = root
         var fullpath = base_dir
 
-        for (var key of keys) {
-          node = node.key_to_part.get(key)
-          // Node doesn't exist in tree - file not found
+        // Navigate to the target node
+        for (var component of components) {
+          node = node.component_to_node.get(component)
           if (!node) return null
           if (node.directory_promise) await node.directory_promise
-          fullpath += '/' + node.part
+          fullpath += '/' + node.file_path_component
         }
 
-        // If the node is a directory, read from the index file inside it
+        // Directories store content in index file
         if (node.directory_promise) fullpath += '/index'
 
         // Serialize on the node's promise chain
@@ -133,35 +170,37 @@ void (() => {
           try {
             return await db._readFile(fullpath)
           } catch (e) {
-            // File doesn't exist or can't be read - return null
             return null
           }
         }))
       }
 
-      db.delete = async key => {
-        var keys = key.match(/[^/]+/g) || []
+      // -------------------------------------------------------------------------
+      // db.delete
+      // -------------------------------------------------------------------------
 
-        // Navigate to the parent node
+      db.delete = async canonical_path => {
+        var components = decode_canonical_path(canonical_path)
+
         var node = root
         var fullpath = base_dir
         var parent_node = null
-        var last_key = null
+        var last_component = null
 
-        for (var i = 0; i < keys.length; i++) {
-          var key_part = keys[i]
+        // Navigate to the target node
+        for (var i = 0; i < components.length; i++) {
+          var component = components[i]
           parent_node = node
-          last_key = key_part
-          node = node.key_to_part.get(key_part)
+          last_component = component
+          node = node.component_to_node.get(component)
 
-          // Node doesn't exist in tree - file not found
           if (!node) return false
 
           if (node.directory_promise) await node.directory_promise
-          fullpath += '/' + node.part
+          fullpath += '/' + node.file_path_component
         }
 
-        // If the node is a directory, delete the index file inside it
+        // Directories store content in index file
         if (node.directory_promise) {
           fullpath += '/index'
         }
@@ -169,102 +208,89 @@ void (() => {
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
           try {
-            // Only remove node from parent's tree if it's not a directory
-            // Directories may have other children, so we keep the node
-            if (!node.directory_promise && parent_node && last_key) {
-              parent_node.key_to_part.delete(last_key)
+            // Remove node from parent's tree (only for files, not directories)
+            if (!node.directory_promise && parent_node && last_component) {
+              parent_node.component_to_node.delete(last_component)
 
               // Clean up case-insensitive tracking
               if (!is_case_sensitive) {
-                var ikey = last_key.toLowerCase()
-                var ipart = node.part.toLowerCase()
-                var ikey_set = parent_node.ikey_to_iparts.get(ikey)
-                if (ikey_set) {
-                  ikey_set.delete(ipart)
-                  if (!ikey_set.size) {
-                    parent_node.ikey_to_iparts.delete(ikey)
+                var icomponent = last_component.toLowerCase()
+                var ifile_path_component = node.file_path_component.toLowerCase()
+                var icomponent_set = parent_node.icomponent_to_ifile_path_components.get(icomponent)
+                if (icomponent_set) {
+                  icomponent_set.delete(ifile_path_component)
+                  if (!icomponent_set.size) {
+                    parent_node.icomponent_to_ifile_path_components.delete(icomponent)
                   }
                 }
               }
             }
 
-            // Delete the file from filesystem
             await db._unlink(fullpath)
-
             return true
           } catch (e) {
-            // File doesn't exist or can't be deleted
             return false
           }
         }))
       }
 
-      db.write = async (key, stuff) => {
-        var keys = key.match(/[^/]+/g) || []
+      // -------------------------------------------------------------------------
+      // db.write
+      // -------------------------------------------------------------------------
+
+      db.write = async (canonical_path, content) => {
+        var components = decode_canonical_path(canonical_path)
         var node = root
         var fullpath = base_dir
 
         // Build path and create missing directories/nodes
-        for (var i = 0; i < keys.length; i++) {
-          var key_part = keys[i]
+        for (var i = 0; i < components.length; i++) {
+          var component = components[i]
 
-          // If node doesn't exist in tree, create it
-          if (!node.key_to_part.has(key_part)) {
-            var encoded_part = encode_filename(key_part)
+          // Create new node if needed
+          if (!node.component_to_node.has(component)) {
+            var file_path_component = encode_file_path_component(component)
 
-            // On case-insensitive filesystems, check for case collisions
+            // Handle case collisions on case-insensitive filesystems
             if (!is_case_sensitive) {
-              var ikey = key_part.toLowerCase()
-              var iparts
+              var icomponent = component.toLowerCase()
+              var ifile_path_components
 
-              // Get or create iparts set
-              if (node.ikey_to_iparts.has(ikey)) {
-                iparts = node.ikey_to_iparts.get(ikey)
+              if (node.icomponent_to_ifile_path_components.has(icomponent)) {
+                ifile_path_components = node.icomponent_to_ifile_path_components.get(icomponent)
               } else {
-                iparts = new Set()
-                node.ikey_to_iparts.set(ikey, iparts)
+                ifile_path_components = new Set()
+                node.icomponent_to_ifile_path_components.set(icomponent, ifile_path_components)
               }
 
-              // Resolve any case collisions
-              encoded_part = resolve_case_collision(encoded_part, iparts)
-
-              // Add to iparts set (single place to add)
-              iparts.add(encoded_part.toLowerCase())
+              file_path_component = resolve_case_collision(file_path_component, ifile_path_components)
+              ifile_path_components.add(file_path_component.toLowerCase())
             }
 
-            var new_node = create_node(encoded_part)
-            node.key_to_part.set(key_part, new_node)
-            fullpath += '/' + encoded_part
+            var new_node = create_node(file_path_component)
+            node.component_to_node.set(component, new_node)
+            fullpath += '/' + file_path_component
 
-            // If it's a directory (not the last part), create it on filesystem
-            if (i < keys.length - 1) {
+            // Create directory on filesystem (for non-leaf nodes)
+            if (i < components.length - 1) {
               new_node.directory_promise = db._mkdir(fullpath, { recursive: true })
               await new_node.directory_promise
             }
 
             node = new_node
           } else {
-            node = node.key_to_part.get(key_part)
+            node = node.component_to_node.get(component)
 
-            // If we need this to be a directory but it's currently a file
-            if (i < keys.length - 1 && !node.directory_promise) {
-              // Convert file to directory
-              // Set directory_promise immediately so future operations know it's a directory
-              var dir_fullpath = fullpath + '/' + node.part
+            // Convert file to directory if needed
+            if (i < components.length - 1 && !node.directory_promise) {
+              var dir_fullpath = fullpath + '/' + node.file_path_component
               var convert_promise = (async () => {
-                // Wait for any pending operations on this node
                 await node.promise_chain
 
-                // Read the existing file content
+                // Read existing content, delete file, create directory, write to index
                 var old_content = await db._readFile(dir_fullpath)
-
-                // Delete the file
                 await db._unlink(dir_fullpath)
-
-                // Create directory
                 await db._mkdir(dir_fullpath, { recursive: true })
-
-                // Write content to index file
                 await db._writeFile(dir_fullpath + '/index', old_content)
               })()
 
@@ -273,62 +299,46 @@ void (() => {
             }
 
             if (node.directory_promise) await node.directory_promise
-            fullpath += '/' + node.part
+            fullpath += '/' + node.file_path_component
           }
         }
 
-        // If the node is a directory, write to the index file inside it
+        // Directories store content in index file
         if (node.directory_promise) fullpath += '/index'
 
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
-          // Add this key to anticipated events before writing
-          anticipated_events.add(key)
+          // Mark as anticipated to suppress callback
+          anticipated_events.add(canonical_path)
 
-          // Write the file
-          await db._writeFile(fullpath, stuff)
+          await db._writeFile(fullpath, content)
 
-          // Remove from anticipated events after enough time for chokidar to detect it
-          // Using 1000ms to be safe with various filesystem delays
+          // Remove from anticipated events after chokidar detection window
           setTimeout(() => {
-            anticipated_events.delete(key)
+            anticipated_events.delete(canonical_path)
           }, 1000)
         }))
       }
 
       return db
     },
-    get_key,
-    encode_filename
+
+    // Exported utilities
+    url_path_to_canonical_path,
+    encode_file_path_component,
+    resolve_case_collision,
+    detect_case_sensitivity
   }
 
-  // Utility functions
-
-  function get_key(url) {
-    var key = require('path').normalize('/' +
-      url_component_to_key(url.split('?')[0]))
-
-    // Normalize away /index and anything after it
-    // /a/b/c/index/blah/bloop -> /a/b/c
-    // /a/b/c/index -> /a/b/c
-    var parts = key.split('/')
-    var index_pos = parts.indexOf('index')
-    if (index_pos !== -1) {
-      key = parts.slice(0, index_pos).join('/')
-      if (!key) {
-        key = '/'
-      }
-    }
-
-    return key
-  }
+  // -----------------------------------------------------------------------------
+  // Utility Functions
+  // -----------------------------------------------------------------------------
 
   async function exists(fullpath) {
     try {
       return await require('fs').promises.stat(fullpath)
     } catch (e) {
-      // File doesn't exist - return falsy
-      // This is hit on case-sensitive filesystems during case sensitivity detection
+      // File doesn't exist
     }
   }
 
@@ -340,98 +350,19 @@ void (() => {
     return is_case_sensitive
   }
 
-  function url_component_to_key(url) {
-    return decodeURIComponent(url).normalize()
-  }
-
-  function create_node(part) {
+  function create_node(file_path_component) {
     return {
-      part,
-      key_to_part: new Map(),
-      ikey_to_iparts: new Map(),
+      file_path_component,
+      component_to_node: new Map(),
+      icomponent_to_ifile_path_components: new Map(),
       promise_chain: Promise.resolve(),
       directory_promise: null
     }
   }
 
-  // Encode a single character as %XX
-  function encode_char(char) {
-    return '%' + char.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')
-  }
-
-  // Encode unsafe characters in a string
-  function encode_unsafe(str) {
-    // Characters that are problematic on various platforms:
-    // < > : " / \ | ? * - Windows/general filesystem restrictions
-    // % - Must be encoded to avoid issues with decodeURIComponent
-    // \x00-\x1f - Control characters (0-31)
-    // \x7f - DEL character (127)
-    return str.replace(/[<>:"|\\?*%\x00-\x1f\x7f/]/g, encode_char)
-  }
-
-  // Resolve case collisions by encoding characters until unique
-  function resolve_case_collision(encoded_part, existing_iparts) {
-    var encoded_lower = encoded_part.toLowerCase()
-
-    // Keep encoding letters until we find a unique lowercase version
-    while (existing_iparts.has(encoded_lower)) {
-      // Find the last character that isn't part of a %XX encoding
-      var found_char = false
-      for (var j = encoded_part.length - 1; j >= 0; j--) {
-        // Skip if this is the second hex digit of a %XX encoding
-        // When we iterate backwards and hit the last hex digit, j-2 will point to %
-        if (j >= 2 && encoded_part[j - 2] === '%') {
-          j -= 2 // Skip the entire %XX sequence
-          continue
-        }
-
-        // Note: The checks for j-1 === '%' and char === '%' are unreachable
-        // because when iterating backwards through valid %XX encodings:
-        // - We always hit the last hex digit first (caught by j-2 check above)
-        // - The j -= 2 jumps us past the first hex digit and the % itself
-
-        // Found a character we can encode
-        var char = encoded_part[j]
-        encoded_part = encoded_part.slice(0, j) + encode_char(char) + encoded_part.slice(j + 1)
-        encoded_lower = encoded_part.toLowerCase()
-        found_char = true
-        break
-      }
-
-      if (!found_char) throw new Error('Should never happen - safety check')
-    }
-
-    return encoded_part
-  }
-
-  function encode_filename(filename) {
-    // First, encode all unsafe characters
-    var encoded = encode_unsafe(filename)
-
-    // Windows reserved filenames (case-insensitive)
-    // Check the original filename, not the encoded one
-    var windows_reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
-    var match = filename.match(windows_reserved)
-
-    if (match) {
-      // If the filename matches a Windows reserved name, encode the last letter of the reserved word
-      var reserved_word = match[1] // The actual reserved word (con, prn, etc.)
-      var last_char = reserved_word[reserved_word.length - 1]
-      var encoded_reserved = reserved_word.slice(0, -1) + encode_char(last_char)
-
-      // Reconstruct: encoded reserved word + encoded extension
-      var encoded_extension = encoded.slice(reserved_word.length)
-      encoded = encoded_reserved + encoded_extension
-    }
-
-    // Handle trailing dots and spaces (problematic on Windows)
-    if (encoded.endsWith('.') || encoded.endsWith(' ')) {
-      var last_char = encoded[encoded.length - 1]
-      encoded = encoded.slice(0, -1) + encode_char(last_char)
-    }
-
-    return encoded
-  }
+  // -----------------------------------------------------------------------------
+  // Exports
+  // -----------------------------------------------------------------------------
 
   module.exports = { url_file_db }
 })()
