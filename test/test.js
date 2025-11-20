@@ -606,6 +606,28 @@ async function runTest(testName, testFunction, expectedResult) {
     'test%20'
   )
 
+  await runTest(
+    'db.read with path missing leading slash throws error',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      // Create root index file
+      await db.write('/', 'root content')
+
+      try {
+        // This should throw an error, not return root content
+        await db.read('path-without-leading-slash')
+        await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+        return 'no error thrown'
+      } catch (e) {
+        await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+        return e.message
+      }
+    },
+    'canonical path must begin with /'
+  )
+
   console.log('\nTesting db.delete...\n')
 
   await runTest(

@@ -19,6 +19,9 @@
 // -----------------------------------------------------------------------------
 
 function decode_canonical_path(canonical_path) {
+  if (!canonical_path.startsWith('/')) {
+    throw new Error('canonical path must begin with /')
+  }
   var components = canonical_path.split('/').slice(1).map(decode_canonical_path_component)
   if (components.length === 1 && components[0] === '') return []
   return components
