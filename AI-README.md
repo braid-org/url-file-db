@@ -124,3 +124,33 @@ Tests are organized by functionality:
 - `index.js` - Main database API with node tree, file watching, and operations
 - `test/canonical_path_tests.js` - Path conversion tests
 - `test/test.js` - Integration tests for database operations
+
+## Standard Release Workflow
+
+When making changes and publishing a new version:
+
+1. **Bump version** in `package.json`
+2. **Run tests** to ensure everything works:
+   ```bash
+   npm test
+   node test/canonical_path_tests.js
+   ```
+3. **Commit changes** with descriptive message following the pattern:
+   ```bash
+   git add -A
+   git commit -m "0.0.X - Brief description
+
+   Detailed explanation of changes.
+
+   🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+   Co-Authored-By: Claude <noreply@anthropic.com>"
+   ```
+4. **Push to remote**:
+   ```bash
+   git push
+   ```
+5. **Publish to npm**:
+   ```bash
+   npm publish
+   ```
