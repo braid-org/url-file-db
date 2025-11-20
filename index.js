@@ -16,11 +16,10 @@ void (() => {
   // -----------------------------------------------------------------------------
 
   var {
-    decode_canonical_path,
-    decode_file_path_component,
-    file_path_to_canonical_path,
-    url_path_to_canonical_path,
-    ensure_unique_case_insensitive_path_component,
+    decode_path,
+    get_canonical_path,
+    decode_component,
+    encode_to_avoid_icase_collision,
     encode_file_path_component
   } = require('./canonical_path')
 
@@ -69,7 +68,7 @@ void (() => {
           var node = root
           for (var i = 0; i < file_path_components.length; i++) {
             var file_path_component = file_path_components[i]
-            var component = decode_file_path_component(file_path_component)
+            var component = decode_component(file_path_component)
 
             // Create node if it doesn't exist
             if (!node.component_to_node.has(component)) {
@@ -103,7 +102,7 @@ void (() => {
           var node = root
           for (var i = 0; i < file_path_components.length; i++) {
             var file_path_component = file_path_components[i]
-            var component = decode_file_path_component(file_path_component)
+            var component = decode_component(file_path_component)
             if (i === file_path_components.length - 1) {
               // Remove from component map
               node.component_to_node.delete(component)
@@ -129,7 +128,7 @@ void (() => {
 
         // Notify callback for file changes
         if (event === 'add' || event === 'change') {
-          var canonical_path = file_path_to_canonical_path(file_path)
+          var canonical_path = get_canonical_path(file_path)
 
           // Don't call callback if this event was anticipated from db.write
           if (!anticipated_events.has(canonical_path)) {
@@ -149,8 +148,8 @@ void (() => {
       // db.read
       // -------------------------------------------------------------------------
 
-      db.read = async canonical_path => {
-        var components = decode_canonical_path(canonical_path)
+      db.read = async path => {
+        var components = decode_path(path)
         var node = root
         var fullpath = base_dir
 
@@ -179,8 +178,8 @@ void (() => {
       // db.delete
       // -------------------------------------------------------------------------
 
-      db.delete = async canonical_path => {
-        var components = decode_canonical_path(canonical_path)
+      db.delete = async path => {
+        var components = decode_path(path)
 
         var node = root
         var fullpath = base_dir
@@ -238,8 +237,9 @@ void (() => {
       // db.write
       // -------------------------------------------------------------------------
 
-      db.write = async (canonical_path, content) => {
-        var components = decode_canonical_path(canonical_path)
+      db.write = async (path, content) => {
+        var components = decode_path(path)
+        var canonical_path = get_canonical_path(path)  // Only needed for anticipated_events
         var node = root
         var fullpath = base_dir
 
@@ -263,7 +263,7 @@ void (() => {
                 node.icomponent_to_ifile_path_components.set(icomponent, ifile_path_components)
               }
 
-              file_path_component = ensure_unique_case_insensitive_path_component(file_path_component, ifile_path_components)
+              file_path_component = encode_to_avoid_icase_collision(file_path_component, ifile_path_components)
               ifile_path_components.add(file_path_component.toLowerCase())
             }
 
@@ -324,9 +324,10 @@ void (() => {
     },
 
     // Exported utilities
-    url_path_to_canonical_path,
+    get_canonical_path,
+    decode_path,
     encode_file_path_component,
-    ensure_unique_case_insensitive_path_component,
+    encode_to_avoid_icase_collision,
     detect_case_sensitivity
   }
 

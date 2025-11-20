@@ -86,7 +86,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir)
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
       await db.write(key, 'content without callback')
       var content = await db.read(key)
 
@@ -106,7 +106,7 @@ async function runTest(testName, testFunction, expectedResult) {
   await runTest(
     'get_key from URL',
     async () => {
-      return url_file_db.url_path_to_canonical_path('/hello/world')
+      return url_file_db.get_canonical_path('/hello/world')
     },
     '/hello/world'
   )
@@ -114,7 +114,7 @@ async function runTest(testName, testFunction, expectedResult) {
   await runTest(
     'get_key with URL encoding',
     async () => {
-      return url_file_db.url_path_to_canonical_path('/hello%20world/test')
+      return url_file_db.get_canonical_path('/hello%20world/test')
     },
     '/hello world/test'
   )
@@ -125,7 +125,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/testdir/file.txt')
+      var key = url_file_db.get_canonical_path('/testdir/file.txt')
       await db.write(key, 'new content')
       var content = await db.read(key)
 
@@ -142,7 +142,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/testdir/file.txt')
+      var key = url_file_db.get_canonical_path('/testdir/file.txt')
       await db.write(key, 'existing content')
       var content = await db.read(key)
 
@@ -159,7 +159,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/a/b/c/d/file.txt')
+      var key = url_file_db.get_canonical_path('/a/b/c/d/file.txt')
       await db.write(key, 'nested')
       var content = await db.read(key)
 
@@ -176,7 +176,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file with spaces.txt')
+      var key = url_file_db.get_canonical_path('/test/file with spaces.txt')
       await db.write(key, 'special chars')
       var content = await db.read(key)
 
@@ -199,7 +199,7 @@ async function runTest(testName, testFunction, expectedResult) {
       db._readFile = overloaded_readFile
       db._writeFile = overloaded_writeFile
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
 
       // Start multiple writes to the same file
       var writes = [
@@ -230,7 +230,7 @@ async function runTest(testName, testFunction, expectedResult) {
       db._readFile = overloaded_readFile
       db._writeFile = overloaded_writeFile
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
 
       // Write initial content
       await db.write(key, 'initial')
@@ -262,7 +262,7 @@ async function runTest(testName, testFunction, expectedResult) {
       db._readFile = overloaded_readFile
       db._writeFile = overloaded_writeFile
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
 
       // Write initial content
       await db.write(key, 'initial')
@@ -293,7 +293,7 @@ async function runTest(testName, testFunction, expectedResult) {
       db._readFile = overloaded_readFile
       db._writeFile = overloaded_writeFile
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
 
       // Write initial content
       await db.write(key, 'initial')
@@ -323,9 +323,9 @@ async function runTest(testName, testFunction, expectedResult) {
       db._readFile = overloaded_readFile
       db._writeFile = overloaded_writeFile
 
-      var key1 = url_file_db.url_path_to_canonical_path('/test/file1.txt')
-      var key2 = url_file_db.url_path_to_canonical_path('/test/file2.txt')
-      var key3 = url_file_db.url_path_to_canonical_path('/test/file3.txt')
+      var key1 = url_file_db.get_canonical_path('/test/file1.txt')
+      var key2 = url_file_db.get_canonical_path('/test/file2.txt')
+      var key3 = url_file_db.get_canonical_path('/test/file3.txt')
 
       // Start writes to different files simultaneously
       var start = Date.now()
@@ -355,7 +355,7 @@ async function runTest(testName, testFunction, expectedResult) {
       db._readFile = overloaded_readFile
       db._writeFile = overloaded_writeFile
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
 
       await db.write(key, 'v1')
 
@@ -385,7 +385,7 @@ async function runTest(testName, testFunction, expectedResult) {
   await runTest(
     'get_key normalizes /index away',
     async () => {
-      return url_file_db.url_path_to_canonical_path('/a/b/c/index')
+      return url_file_db.get_canonical_path('/a/b/c/index')
     },
     '/a/b/c'
   )
@@ -393,7 +393,7 @@ async function runTest(testName, testFunction, expectedResult) {
   await runTest(
     'get_key normalizes /index with trailing path',
     async () => {
-      return url_file_db.url_path_to_canonical_path('/a/b/c/index/foo/bar')
+      return url_file_db.get_canonical_path('/a/b/c/index/foo/bar')
     },
     '/a/b/c'
   )
@@ -404,8 +404,8 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key1 = url_file_db.url_path_to_canonical_path('/a')
-      var key2 = url_file_db.url_path_to_canonical_path('/a/index')
+      var key1 = url_file_db.get_canonical_path('/a')
+      var key2 = url_file_db.get_canonical_path('/a/index')
       await db.write(key1, 'content for a')
       var content = await db.read(key2)
 
@@ -422,8 +422,8 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key1 = url_file_db.url_path_to_canonical_path('/a/index')
-      var key2 = url_file_db.url_path_to_canonical_path('/a')
+      var key1 = url_file_db.get_canonical_path('/a/index')
+      var key2 = url_file_db.get_canonical_path('/a')
       await db.write(key1, 'content for a/index')
       var content = await db.read(key2)
 
@@ -440,8 +440,8 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key_a = url_file_db.url_path_to_canonical_path('/a')
-      var key_ab = url_file_db.url_path_to_canonical_path('/a/b')
+      var key_a = url_file_db.get_canonical_path('/a')
+      var key_ab = url_file_db.get_canonical_path('/a/b')
 
       // Write /a as a file
       await db.write(key_a, 'original content')
@@ -470,9 +470,9 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key_a = url_file_db.url_path_to_canonical_path('/a')
-      var key_ab = url_file_db.url_path_to_canonical_path('/a/b')
-      var key_abc = url_file_db.url_path_to_canonical_path('/a/b/c')
+      var key_a = url_file_db.get_canonical_path('/a')
+      var key_ab = url_file_db.get_canonical_path('/a/b')
+      var key_abc = url_file_db.get_canonical_path('/a/b/c')
 
       await db.write(key_a, 'a content')
       await db.write(key_ab, 'b content')
@@ -495,9 +495,9 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key_x = url_file_db.url_path_to_canonical_path('/x')
-      var key_xy = url_file_db.url_path_to_canonical_path('/x/y')
-      var key_xz = url_file_db.url_path_to_canonical_path('/x/z')
+      var key_x = url_file_db.get_canonical_path('/x')
+      var key_xy = url_file_db.get_canonical_path('/x/y')
+      var key_xz = url_file_db.get_canonical_path('/x/z')
 
       // Write /x as a file
       await db.write(key_x, 'x content')
@@ -534,7 +534,7 @@ async function runTest(testName, testFunction, expectedResult) {
       await new Promise(resolve => setTimeout(resolve, 200))
 
       // Write to a file inside that directory
-      var key = url_file_db.url_path_to_canonical_path('/external_dir')
+      var key = url_file_db.get_canonical_path('/external_dir')
       await db.write(key, 'content in external dir')
 
       // Read it back
@@ -569,7 +569,7 @@ async function runTest(testName, testFunction, expectedResult) {
   await runTest(
     'get_key with /index normalizes to /',
     async () => {
-      return url_file_db.url_path_to_canonical_path('/index')
+      return url_file_db.get_canonical_path('/index')
     },
     '/'
   )
@@ -607,25 +607,21 @@ async function runTest(testName, testFunction, expectedResult) {
   )
 
   await runTest(
-    'db.read with path missing leading slash throws error',
+    'db.read with path missing leading slash works (gets canonicalized)',
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      // Create root index file
-      await db.write('/', 'root content')
+      // Write to a path with leading slash
+      await db.write('/test/file.txt', 'test content')
 
-      try {
-        // This should throw an error, not return root content
-        await db.read('path-without-leading-slash')
-        await fs.promises.rm(db_test_dir, { recursive: true, force: true })
-        return 'no error thrown'
-      } catch (e) {
-        await fs.promises.rm(db_test_dir, { recursive: true, force: true })
-        return e.message
-      }
+      // Read without leading slash should work (gets canonicalized)
+      var content = await db.read('test/file.txt')
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+      return content ? content.toString() : null
     },
-    'canonical path must begin with /'
+    'test content'
   )
 
   console.log('\nTesting db.delete...\n')
@@ -636,7 +632,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
       await db.write(key, 'content to delete')
 
       var result = await db.delete(key)
@@ -670,7 +666,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
       await db.write(key, 'first content')
       await db.delete(key)
       await db.write(key, 'second content')
@@ -689,8 +685,8 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key1 = url_file_db.url_path_to_canonical_path('/a/b/c')
-      var key2 = url_file_db.url_path_to_canonical_path('/a/b/d')
+      var key1 = url_file_db.get_canonical_path('/a/b/c')
+      var key2 = url_file_db.get_canonical_path('/a/b/d')
 
       await db.write(key1, 'content c')
       await db.write(key2, 'content d')
@@ -712,8 +708,8 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key_a = url_file_db.url_path_to_canonical_path('/a')
-      var key_ab = url_file_db.url_path_to_canonical_path('/a/b')
+      var key_a = url_file_db.get_canonical_path('/a')
+      var key_ab = url_file_db.get_canonical_path('/a/b')
 
       // Create /a as file, then /a/b to convert it to directory
       await db.write(key_a, 'a content')
@@ -737,7 +733,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
       await db.write(key, 'content')
 
       // Try to delete the same file twice concurrently
@@ -784,9 +780,9 @@ async function runTest(testName, testFunction, expectedResult) {
       var db = await url_file_db.create(db_test_dir, () => {})
 
       // Write files that differ only by case
-      var key1 = url_file_db.url_path_to_canonical_path('/test/File')
-      var key2 = url_file_db.url_path_to_canonical_path('/test/file')
-      var key3 = url_file_db.url_path_to_canonical_path('/test/FILE')
+      var key1 = url_file_db.get_canonical_path('/test/File')
+      var key2 = url_file_db.get_canonical_path('/test/file')
+      var key3 = url_file_db.get_canonical_path('/test/FILE')
 
       await db.write(key1, 'first')
       await db.write(key2, 'second')
@@ -812,8 +808,8 @@ async function runTest(testName, testFunction, expectedResult) {
       var db = await url_file_db.create(db_test_dir, () => {})
 
       // Write files that differ only by case
-      var key1 = url_file_db.url_path_to_canonical_path('/test/File')
-      var key2 = url_file_db.url_path_to_canonical_path('/test/file')
+      var key1 = url_file_db.get_canonical_path('/test/File')
+      var key2 = url_file_db.get_canonical_path('/test/file')
 
       await db.write(key1, 'first')
       await db.write(key2, 'second')
@@ -850,8 +846,8 @@ async function runTest(testName, testFunction, expectedResult) {
       // - First hits 'A' (the second hex digit of %3A)
       // - Checks if j-2 is '%', which it is!
       // - This triggers COVER_ME_54 and skips the %3A sequence
-      var key1 = url_file_db.url_path_to_canonical_path('/test/a:')
-      var key2 = url_file_db.url_path_to_canonical_path('/test/A:')
+      var key1 = url_file_db.get_canonical_path('/test/a:')
+      var key2 = url_file_db.get_canonical_path('/test/A:')
 
       await db.write(key1, 'first')
       await db.write(key2, 'second')
@@ -889,7 +885,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, () => {})
 
-      var key = url_file_db.url_path_to_canonical_path('/test/file.txt')
+      var key = url_file_db.get_canonical_path('/test/file.txt')
 
       // Write a file
       await db.write(key, 'initial content')

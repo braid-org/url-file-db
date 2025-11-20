@@ -36,7 +36,7 @@ When writing to the filesystem, canonical path components are encoded to handle:
 
 On case-insensitive filesystems (macOS, Windows), the library detects when two canonical paths would map to the same filesystem path (e.g., `/File.txt` and `/file.txt`). The second path is modified by percent-encoding letters until it becomes unique.
 
-The function `ensure_unique_case_insensitive_path_component(component, existing_icomponents)` implements this by:
+The function `encode_to_avoid_icase_collision(component, existing_icomponents)` implements this by:
 1. Checking if the lowercased component collides with existing lowercased components
 2. If collision detected, percent-encode the last letter (working right-to-left)
 3. Repeat until no collision exists
