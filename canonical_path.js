@@ -1,70 +1,99 @@
-
 // =============================================================================
-// Canonical Path Utilities
+// Path Utilities
 // =============================================================================
 //
-// This module handles conversions between three path representations:
-//
-//   url_path       - URL path from HTTP requests (e.g., /a/hello%20world)
-//   file_path      - Filesystem path on disk (e.g., /a/hello%20world)
-//   canonical_path - Normalized internal representation (e.g., /a/hello world)
-//
-// Canonical paths use minimal encoding (only % and /) to allow components
-// to contain any characters while remaining splittable on /.
+// This module handles two concepts:
+//   1. path - any string representation with "/" separators
+//      (can be URL-encoded, file path, or canonical)
+//   2. canonical_path - our specific encoding that always starts with "/"
 //
 // =============================================================================
 
 // -----------------------------------------------------------------------------
-// Canonical Path
+// Universal Path Parser
 // -----------------------------------------------------------------------------
 
-function decode_canonical_path(canonical_path) {
-  if (!canonical_path.startsWith('/')) {
-    throw new Error('canonical path must begin with /')
+function parse_path(path) {
+  // Handle optional leading slash
+  if (path.startsWith('/')) {
+    path = path.slice(1)
   }
-  var components = canonical_path.split('/').slice(1).map(decode_canonical_path_component)
-  if (components.length === 1 && components[0] === '') return []
-  return components
+
+  // Handle empty path or root path
+  if (path === '') {
+    return []
+  }
+
+  // Remove query string and fragment if present (for URL paths)
+  path = path.split(/[\?\#]/)[0]
+
+  // Split by "/" and process each component
+  var components = path.split('/').map(component => {
+    // Decode any percent-encoding present
+    try {
+      component = decodeURIComponent(component)
+    } catch (e) {
+      // If decoding fails, use the component as-is
+    }
+    // Normalize Unicode
+    return component.normalize()
+  })
+
+  // Handle /index normalization - strip /index and everything after it
+  var index_pos = components.indexOf('index')
+  if (index_pos !== -1) {
+    components = components.slice(0, index_pos)
+  }
+
+  // Handle path normalization (. and ..)
+  var normalized = []
+  for (var component of components) {
+    if (component === '.' || component === '') {
+      continue
+    }
+    if (component === '..') {
+      normalized.pop()
+    } else {
+      normalized.push(component)
+    }
+  }
+
+  return normalized
 }
+
+// -----------------------------------------------------------------------------
+// Canonical Path Encoding
+// -----------------------------------------------------------------------------
 
 function encode_canonical_path(components) {
   return '/' + components.map(encode_canonical_path_component).join('/')
 }
 
 function encode_canonical_path_component(component) {
+  // Only encode % and / to keep canonical paths readable
   component = component.replace(/%/g, '%25')
   component = component.replace(/\//g, '%2F')
   return component
 }
 
 function decode_canonical_path_component(component) {
+  // Decode in reverse order
   component = component.replace(/%2F/g, '/')
   component = component.replace(/%25/g, '%')
   return component
 }
 
-// -----------------------------------------------------------------------------
-// File Path
-// -----------------------------------------------------------------------------
-
-function file_path_to_canonical_path(path) {
-  if (!path.startsWith('/')) {
-    throw new Error('file path must begin with /')
+// For backwards compatibility - just use parse_path now
+function decode_canonical_path(canonical_path) {
+  if (!canonical_path.startsWith('/')) {
+    throw new Error('canonical path must begin with /')
   }
-
-  path = require('path').normalize(path)
-
-  var file_path_components = path.split('/').slice(1)
-  var components = file_path_components.map(decode_file_path_component)
-
-  // Strip /index and everything after it
-  var index_pos = components.indexOf('index')
-  if (index_pos !== -1) {
-    components = components.slice(0, index_pos)
-  }
-
-  return encode_canonical_path(components)
+  return parse_path(canonical_path)
 }
+
+// -----------------------------------------------------------------------------
+// File System Path Components
+// -----------------------------------------------------------------------------
 
 function decode_file_path_component(file_path_component) {
   return decodeURIComponent(file_path_component)
@@ -98,37 +127,21 @@ function encode_file_path_component(component) {
 }
 
 // -----------------------------------------------------------------------------
-// URL Path
+// Backwards Compatibility Functions
 // -----------------------------------------------------------------------------
+
+function file_path_to_canonical_path(path) {
+  if (!path.startsWith('/')) {
+    throw new Error('file path must begin with /')
+  }
+  return encode_canonical_path(parse_path(path))
+}
 
 function url_path_to_canonical_path(url_path) {
   if (!url_path.startsWith('/')) {
     throw new Error('url path must begin with /')
   }
-
-  // Remove query string and fragment
-  var path = url_path.split(/[\?\#]/)[0]
-
-  // Split into components and normalize each
-  var components = path.split('/').map(component => {
-    component = decodeURIComponent(component)
-    component = component.normalize()
-    component = encode_canonical_path_component(component)
-    return component
-  })
-
-  // Strip /index and everything after it
-  var index_pos = components.indexOf('index')
-  if (index_pos !== -1) {
-    components = components.slice(0, index_pos)
-    if (components.length === 1) components.push('')
-  }
-
-  // Join and normalize dots
-  var canonical_path = components.join('/')
-  canonical_path = require('path').normalize(canonical_path)
-
-  return canonical_path
+  return encode_canonical_path(parse_path(url_path))
 }
 
 // -----------------------------------------------------------------------------
@@ -182,18 +195,21 @@ function encode_char(char) {
 // -----------------------------------------------------------------------------
 
 module.exports = {
-  // Canonical path
-  decode_canonical_path,
+  // New simplified API
+  parse_path,
   encode_canonical_path,
+
+  // Canonical path components
   decode_canonical_path_component,
   encode_canonical_path_component,
 
-  // File path
-  file_path_to_canonical_path,
+  // File path components
   decode_file_path_component,
   encode_file_path_component,
 
-  // URL path
+  // Backwards compatibility
+  decode_canonical_path,
+  file_path_to_canonical_path,
   url_path_to_canonical_path,
 
   // Utilities

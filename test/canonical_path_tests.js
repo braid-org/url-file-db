@@ -1,4 +1,5 @@
 var {
+  parse_path,
   encode_canonical_path_component,
   decode_canonical_path_component,
   decode_canonical_path,
@@ -36,9 +37,74 @@ async function runTest(testName, testFunction, expectedResult) {
   console.log('Testing canonical_path.js...\n')
 
   // ===================
+  // parse_path - New Universal Parser
+  // ===================
+  console.log('--- parse_path (new universal parser) ---\n')
+
+  await runTest(
+    'parse URL path with encoding',
+    () => parse_path('/hello%20world/test'),
+    ['hello world', 'test']
+  )
+
+  await runTest(
+    'parse file path',
+    () => parse_path('/hello/world'),
+    ['hello', 'world']
+  )
+
+  await runTest(
+    'parse canonical path',
+    () => parse_path('/hello%2Fworld/test'),
+    ['hello/world', 'test']
+  )
+
+  await runTest(
+    'parse path with query string',
+    () => parse_path('/api/users?id=123'),
+    ['api', 'users']
+  )
+
+  await runTest(
+    'parse path with fragment',
+    () => parse_path('/docs/guide#section'),
+    ['docs', 'guide']
+  )
+
+  await runTest(
+    'parse path with index normalization',
+    () => parse_path('/docs/index/foo'),
+    ['docs']
+  )
+
+  await runTest(
+    'parse path without leading slash',
+    () => parse_path('hello/world'),
+    ['hello', 'world']
+  )
+
+  await runTest(
+    'parse path with dots',
+    () => parse_path('/a/./b/../c'),
+    ['a', 'c']
+  )
+
+  await runTest(
+    'parse root path',
+    () => parse_path('/'),
+    []
+  )
+
+  await runTest(
+    'parse empty path',
+    () => parse_path(''),
+    []
+  )
+
+  // ===================
   // encode_canonical_path_component / decode_canonical_path_component
   // ===================
-  console.log('--- encode/decode_canonical_path_component ---\n')
+  console.log('\n--- encode/decode_canonical_path_component ---\n')
 
   await runTest(
     'encode % in component',
