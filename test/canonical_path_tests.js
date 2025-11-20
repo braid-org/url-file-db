@@ -7,7 +7,7 @@ var {
   file_path_to_canonical_path,
   url_path_to_canonical_path,
   encode_file_path_component,
-  resolve_case_collision
+  ensure_unique_case_insensitive_path_component
 } = require('../canonical_path.js')
 
 var passed = 0
@@ -277,15 +277,15 @@ async function runTest(testName, testFunction, expectedResult) {
 
 
   // ===================
-  // resolve_case_collision
+  // ensure_unique_case_insensitive_path_component
   // ===================
-  console.log('\n--- resolve_case_collision ---\n')
+  console.log('\n--- ensure_unique_case_insensitive_path_component ---\n')
 
   await runTest(
     'no collision',
     () => {
       var existing = new Set(['hello'])
-      return resolve_case_collision('world', existing)
+      return ensure_unique_case_insensitive_path_component('world', existing)
     },
     'world'
   )
@@ -294,7 +294,7 @@ async function runTest(testName, testFunction, expectedResult) {
     'with collision',
     () => {
       var existing = new Set(['hello'])
-      return resolve_case_collision('hello', existing)
+      return ensure_unique_case_insensitive_path_component('hello', existing)
     },
     'hell%6F'
   )
@@ -305,7 +305,7 @@ async function runTest(testName, testFunction, expectedResult) {
       // Start with 'ab' already encoded last char, need to collide twice
       // to force skipping over the %XX and encoding the previous char
       var existing = new Set(['a%42', 'a%34%32'])  // 'aB' and 'a42' in lowercase
-      return resolve_case_collision('a%42', existing)
+      return ensure_unique_case_insensitive_path_component('a%42', existing)
     },
     '%61%42'
   )
@@ -316,7 +316,7 @@ async function runTest(testName, testFunction, expectedResult) {
       // 'a1' collides with existing 'a1'
       // Should encode the 'a', not the '1', since '1' has no case variants
       var existing = new Set(['a1'])
-      return resolve_case_collision('a1', existing)
+      return ensure_unique_case_insensitive_path_component('a1', existing)
     },
     '%611'
   )

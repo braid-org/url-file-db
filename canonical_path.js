@@ -132,38 +132,38 @@ function url_path_to_canonical_path(url_path) {
 // Case Collision Resolution
 // -----------------------------------------------------------------------------
 
-function resolve_case_collision(encoded_part, existing_iparts) {
-  var encoded_lower = encoded_part.toLowerCase()
+function ensure_unique_case_insensitive_path_component(component, existing_icomponents) {
+  var icomponent = component.toLowerCase()
 
-  while (existing_iparts.has(encoded_lower)) {
-    var found_char = false
+  while (existing_icomponents.has(icomponent)) {
+    var found_letter = false
 
     // Find the last letter (a-zA-Z) that isn't part of a %XX encoding
-    for (var j = encoded_part.length - 1; j >= 0; j--) {
-      if (j >= 2 && encoded_part[j - 2] === '%') {
-        j -= 2
+    for (var i = component.length - 1; i >= 0; i--) {
+      if (i >= 2 && component[i - 2] === '%') {
+        i -= 2
         continue
       }
 
-      var char = encoded_part[j]
+      var char = component[i]
 
       // Only encode letters - encoding non-letters doesn't help resolve case collisions
       if (!/[a-zA-Z]/.test(char)) {
         continue
       }
 
-      encoded_part = encoded_part.slice(0, j) + encode_char(char) + encoded_part.slice(j + 1)
-      encoded_lower = encoded_part.toLowerCase()
-      found_char = true
+      component = component.slice(0, i) + encode_char(char) + component.slice(i + 1)
+      icomponent = component.toLowerCase()
+      found_letter = true
       break
     }
 
-    if (!found_char) {
+    if (!found_letter) {
       throw new Error('Should never happen - safety check')
     }
   }
 
-  return encoded_part
+  return component
 }
 
 // -----------------------------------------------------------------------------
@@ -194,6 +194,6 @@ module.exports = {
   url_path_to_canonical_path,
 
   // Utilities
-  resolve_case_collision,
+  ensure_unique_case_insensitive_path_component,
   encode_char
 }

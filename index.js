@@ -20,7 +20,7 @@ void (() => {
     decode_file_path_component,
     file_path_to_canonical_path,
     url_path_to_canonical_path,
-    resolve_case_collision,
+    ensure_unique_case_insensitive_path_component,
     encode_file_path_component
   } = require('./canonical_path')
 
@@ -263,7 +263,7 @@ void (() => {
                 node.icomponent_to_ifile_path_components.set(icomponent, ifile_path_components)
               }
 
-              file_path_component = resolve_case_collision(file_path_component, ifile_path_components)
+              file_path_component = ensure_unique_case_insensitive_path_component(file_path_component, ifile_path_components)
               ifile_path_components.add(file_path_component.toLowerCase())
             }
 
@@ -326,7 +326,7 @@ void (() => {
     // Exported utilities
     url_path_to_canonical_path,
     encode_file_path_component,
-    resolve_case_collision,
+    ensure_unique_case_insensitive_path_component,
     detect_case_sensitivity
   }
 
