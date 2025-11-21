@@ -50,6 +50,26 @@ Throughout the codebase, variables with an `i` prefix represent **case-insensiti
 
 This convention makes it immediately clear which variables are used for case-insensitive comparisons.
 
+## API Changes in v0.0.17
+
+### Breaking Changes
+
+The `create` function signature has changed:
+```javascript
+// Old: url_file_db.create(base_dir, callback?, meta_dir?)
+// New: url_file_db.create(base_dir, meta_dir, callback?, filter_cb?)
+```
+
+- `meta_dir` is now required and moved to second position
+- Added optional `filter_cb` for filtering file events
+
+### New Features
+
+- **Metadata persistence**: Files are tracked across database restarts
+- **Read-only support**: Mark files as read-only while allowing programmatic writes
+- **Event filtering**: Filter which file events to process
+- **Improved serialization**: Uses `within_fiber` pattern throughout for better concurrency
+
 ## Architecture
 
 ### Node Tree Structure
@@ -85,7 +105,22 @@ node.promise_chain = node.promise_chain.then(() => actual_operation())
 
 ### File Watching
 
-Uses `chokidar` to watch the base directory for external changes. The `chokidar_handler` builds the node tree and calls the user callback for unanticipated changes (i.e., not from `db.write`).
+Uses `chokidar` to watch the base directory for external changes. The `chokidar_handler`:
+- Builds and maintains the node tree
+- Calls the user callback for new files or modified files
+- Uses `within_fiber` to serialize events per path, preventing duplicate callbacks
+- Supports optional `filter_cb` to skip certain files/events
+- Tracks file modification times using BigInt for nanosecond precision
+
+### Meta Storage
+
+The metadata storage (previously in meta.js) is now inline in index.js:
+- Stores metadata in a separate directory as JSON files
+- Tracks when files were first seen and last modified
+- Supports custom metadata fields via `update_meta`
+- Uses `within_fiber` for serialization instead of promise chains
+- Handles case-insensitive filesystems with collision avoidance
+- Persists across database restarts
 
 ## Key Functions
 
@@ -98,9 +133,22 @@ Uses `chokidar` to watch the base directory for external changes. The `chokidar_
 
 ### Database Operations
 
+#### File Operations
 - `db.read(canonical_path)` - Returns file contents or null
 - `db.write(canonical_path, content)` - Writes file, handling directory creation and file-to-directory conversion
 - `db.delete(canonical_path)` - Deletes file, returns true/false
+
+#### Metadata Operations
+- `db.has(canonical_path)` - Checks if file has been seen before
+- `db.list()` - Returns array of all known canonical paths
+- `db.get_meta(canonical_path)` - Gets metadata object for a path
+- `db.set_meta(canonical_path, meta)` - Sets complete metadata
+- `db.update_meta(canonical_path, updates)` - Updates specific metadata fields
+- `db.delete_meta(canonical_path)` - Removes metadata for a path
+
+#### Read-Only Operations
+- `db.is_read_only(canonical_path)` - Checks if file is marked read-only
+- `db.set_read_only(canonical_path, value)` - Sets/clears read-only flag
 
 ## Testing Strategy
 
@@ -110,6 +158,16 @@ Tests are organized by functionality:
 - Case collision resolution
 - File-to-directory conversion
 - Edge cases (Windows reserved names, special characters)
+- Metadata persistence and operations
+- Read-only file handling
+- Callback behavior for new vs existing files
+- Concurrent operations and serialization
+
+The test runner supports filtering:
+```bash
+node test/test.js --filter="meta"  # Run only meta-related tests
+node test/test.js --grep="delete"  # Run only delete-related tests
+```
 
 ## Common Pitfalls
 
@@ -121,9 +179,15 @@ Tests are organized by functionality:
 ## Module Structure
 
 - `canonical_path.js` - Path conversion and encoding utilities
-- `index.js` - Main database API with node tree, file watching, and operations
+- `index.js` - Main database API including:
+  - Node tree management for filesystem mirroring
+  - File watching with chokidar
+  - Database operations (read/write/delete)
+  - Inline meta storage implementation (previously in meta.js)
+  - Read-only file support
+  - Event serialization using `within_fiber` utility
 - `test/canonical_path_tests.js` - Path conversion tests
-- `test/test.js` - Integration tests for database operations
+- `test/test.js` - Integration tests with `--filter` support for selective testing
 
 ## Standard Release Workflow
 
