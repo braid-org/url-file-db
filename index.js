@@ -28,10 +28,11 @@ void (() => {
   // -----------------------------------------------------------------------------
 
   url_file_db = {
-    create: async (base_dir, cb) => {
+    create: async (base_dir, meta_dir, cb, filter_cb) => {
       var db = {}
 
       base_dir = require('path').resolve(base_dir)
+      meta_dir = require('path').resolve(meta_dir)
 
       // Bind filesystem operations
       var fs = require('fs').promises
@@ -43,6 +44,159 @@ void (() => {
       await db._mkdir(base_dir, { recursive: true })
 
       var is_case_sensitive = await detect_case_sensitivity(base_dir)
+
+      // -----------------------------------------------------------------------------
+      // Meta Storage (inline implementation using within_fiber)
+      // -----------------------------------------------------------------------------
+
+      var meta_storage = await (async () => {
+        // In-memory cache for all metadata
+        var meta_cache = new Map()
+
+        // Track case-insensitive components to avoid collisions
+        var path_to_encoded = new Map()  // canonical_path -> encoded filename
+        var icomponent_to_paths = new Map()  // lowercase component -> Set of canonical paths
+
+        // Ensure meta directory exists
+        await fs.mkdir(meta_dir, { recursive: true })
+
+        // Convert canonical path to safe filename for meta storage
+        function path_to_meta_filename(canonical_path) {
+          if (path_to_encoded.has(canonical_path)) {
+            return path_to_encoded.get(canonical_path)
+          }
+
+          // Swap "/" and "!" to avoid ugly %2F encoding while keeping paths readable
+          var swapped = canonical_path.replace(/[\/!]/g, x => x === '/' ? '!' : '/')
+          var encoded = encode_file_path_component(swapped)
+
+          if (!is_case_sensitive) {
+            encoded = encode_to_avoid_icase_collision(encoded, icomponent_to_paths)
+          }
+
+          return encoded
+        }
+
+        // Save meta data for a specific path (internal - uses within_fiber)
+        async function save_meta_internal(canonical_path, meta_data) {
+          return within_fiber(`meta:${canonical_path}`, async () => {
+            var filename = path_to_meta_filename(canonical_path)
+            var filepath = meta_dir + '/' + filename
+
+            meta_data.canonical_path = canonical_path
+            meta_cache.set(canonical_path, meta_data)
+            path_to_encoded.set(canonical_path, filename)
+
+            if (!is_case_sensitive) {
+              var icomponent = filename.toLowerCase()
+              if (!icomponent_to_paths.has(icomponent)) {
+                icomponent_to_paths.set(icomponent, new Set())
+              }
+              icomponent_to_paths.get(icomponent).add(canonical_path)
+            }
+
+            await fs.writeFile(filepath, JSON.stringify(meta_data, null, 2))
+          })
+        }
+
+        // Delete meta data for a specific path (internal - uses within_fiber)
+        async function delete_meta_internal(canonical_path) {
+          return within_fiber(`meta:${canonical_path}`, async () => {
+            var filename = path_to_meta_filename(canonical_path)
+            var filepath = meta_dir + '/' + filename
+
+            meta_cache.delete(canonical_path)
+            path_to_encoded.delete(canonical_path)
+
+            if (!is_case_sensitive) {
+              var icomponent = filename.toLowerCase()
+              var paths = icomponent_to_paths.get(icomponent)
+              if (paths) {
+                paths.delete(canonical_path)
+                if (paths.size === 0) {
+                  icomponent_to_paths.delete(icomponent)
+                }
+              }
+            }
+
+            try {
+              await fs.unlink(filepath)
+            } catch (e) {
+              if (e.code !== 'ENOENT') throw e
+            }
+          })
+        }
+
+        // Load existing metadata from disk
+        async function load_all_meta() {
+          try {
+            var files = await fs.readdir(meta_dir)
+            for (var file of files) {
+              try {
+                var content = await fs.readFile(meta_dir + '/' + file, 'utf8')
+                var data = JSON.parse(content)
+                if (data.canonical_path) {
+                  meta_cache.set(data.canonical_path, data)
+                  path_to_encoded.set(data.canonical_path, file)
+
+                  if (!is_case_sensitive) {
+                    var icomponent = file.toLowerCase()
+                    if (!icomponent_to_paths.has(icomponent)) {
+                      icomponent_to_paths.set(icomponent, new Set())
+                    }
+                    icomponent_to_paths.get(icomponent).add(data.canonical_path)
+                  }
+                }
+              } catch (e) {
+                console.error(`Failed to load meta file ${file}:`, e.message)
+              }
+            }
+          } catch (e) {
+            if (e.code !== 'ENOENT') {
+              console.error('Failed to load metadata:', e.message)
+            }
+          }
+        }
+
+        // Load all metadata on initialization
+        await load_all_meta()
+
+        // Return the meta storage API
+        return {
+          get(canonical_path) {
+            return meta_cache.get(canonical_path)
+          },
+
+          async set(canonical_path, meta_data) {
+            await save_meta_internal(canonical_path, meta_data)
+          },
+
+          async update(canonical_path, updates) {
+            var existing = meta_cache.get(canonical_path) || {}
+            var updated = { ...existing, ...updates }
+            await save_meta_internal(canonical_path, updated)
+          },
+
+          async delete(canonical_path) {
+            await delete_meta_internal(canonical_path)
+          },
+
+          has_been_seen(canonical_path) {
+            return meta_cache.has(canonical_path)
+          },
+
+          async mark_as_seen(canonical_path, mtime_ns) {
+            await this.update(canonical_path, {
+              last_seen: Date.now(),
+              mtime_ns: '' + mtime_ns
+            })
+          },
+
+          get_all_paths() {
+            return Array.from(meta_cache.keys())
+          }
+        }
+      })()
 
       // Track canonical_paths with anticipated events from db.write operations
       // These events should not trigger the user callback
@@ -56,10 +210,16 @@ void (() => {
       // File Watcher
       // -------------------------------------------------------------------------
 
-      function chokidar_handler(fullpath, event) {
+      async function chokidar_handler(fullpath, event) {
         if (!fullpath.startsWith(base_dir + '/')) {
           return
         }
+
+        // Optional filter callback to decide whether to handle this event
+        if (filter_cb && !filter_cb(fullpath, event)) {
+          return
+        }
+
         var file_path = fullpath.slice(base_dir.length)
         var file_path_components = file_path.slice(1).split('/')
 
@@ -126,13 +286,43 @@ void (() => {
           }
         }
 
+        // Handle file deletions - clean up metadata
+        if (event === 'unlink') {
+          var canonical_path = get_canonical_path(file_path)
+          await meta_storage.delete(canonical_path)
+        }
+
         // Notify callback for file changes
         if (event === 'add' || event === 'change') {
           var canonical_path = get_canonical_path(file_path)
 
           // Don't call callback if this event was anticipated from db.write
           if (!anticipated_events.has(canonical_path)) {
-            if (cb) cb(canonical_path)
+            // Serialize event handling per path to avoid duplicate callbacks
+            within_fiber(`chokidar:${fullpath}`, async () => {
+              try {
+                var stats = await require('fs').promises.stat(fullpath, { bigint: true })
+                var meta = meta_storage.get(canonical_path)
+
+                // Trigger callback if:
+                // 1. Never seen before (no metadata)
+                // 2. File is newer than our last recorded mtime
+                // Compare as BigInt for accurate nanosecond comparison
+                var meta_mtime_ns = meta && meta.mtime_ns ? BigInt(meta.mtime_ns) : null
+                var should_trigger = !meta ||
+                                     !meta_mtime_ns ||
+                                     stats.mtimeNs > meta_mtime_ns
+
+                if (should_trigger) {
+                  if (cb) cb(canonical_path)
+                  // Update the metadata with new mtime
+                  await meta_storage.mark_as_seen(canonical_path, stats.mtimeNs)
+                }
+              } catch (e) {
+                // File was deleted, clean up metadata
+                await meta_storage.delete(canonical_path)
+              }
+            })
           }
         }
       }
@@ -140,6 +330,8 @@ void (() => {
       var c = require('chokidar').watch(base_dir, {
           useFsEvents: true,
           usePolling: false,
+          // Ignore the meta directory to avoid infinite loops
+          ignored: meta_dir
       })
       for (let e of ['add', 'addDir', 'change', 'unlink', 'unlinkDir'])
         c.on(e, x => chokidar_handler(x, e))
@@ -231,6 +423,11 @@ void (() => {
             }
 
             await db._unlink(fullpath)
+
+            // Delete metadata when file is deleted
+            var canonical_path = get_canonical_path(path)
+            await meta_storage.delete(canonical_path)
+
             return true
           } catch (e) {
             return false
@@ -324,6 +521,15 @@ void (() => {
 
           await db._writeFile(fullpath, content)
 
+          // Record metadata with ns modified time
+          try {
+            var stats = await require('fs').promises.stat(fullpath, { bigint: true })
+            await meta_storage.mark_as_seen(canonical_path, stats.mtimeNs)
+          } catch (e) {
+            // If file doesn't exist after write, delete metadata
+            await meta_storage.delete(canonical_path)
+          }
+
           // Restore read-only status if it was set before
           if (was_read_only) {
             await set_read_only(fullpath, true)
@@ -386,6 +592,48 @@ void (() => {
           return false
         }
       }
+
+      // -------------------------------------------------------------------------
+      // Meta storage API
+      // -------------------------------------------------------------------------
+
+      // Get metadata for a path
+      db.get_meta = (path) => {
+        var canonical_path = get_canonical_path(path)
+        return meta_storage.get(canonical_path)
+      }
+
+      // Set complete metadata for a path
+      db.set_meta = async (path, meta_data) => {
+        var canonical_path = get_canonical_path(path)
+        await meta_storage.set(canonical_path, meta_data)
+      }
+
+      // Update specific fields in metadata (merges with existing)
+      db.update_meta = async (path, updates) => {
+        var canonical_path = get_canonical_path(path)
+        await meta_storage.update(canonical_path, updates)
+      }
+
+      // Delete metadata for a path
+      db.delete_meta = async (path) => {
+        var canonical_path = get_canonical_path(path)
+        await meta_storage.delete(canonical_path)
+      }
+
+      // Check if database has this file (has seen it before)
+      db.has = (path) => {
+        var canonical_path = get_canonical_path(path)
+        return meta_storage.has_been_seen(canonical_path)
+      }
+
+      // List all known paths (from metadata)
+      db.list = () => {
+        return meta_storage.get_all_paths()
+      }
+
+      // Alias for list() to be more explicit
+      db.get_all_meta_paths = db.list
 
       return db
     },
@@ -457,6 +705,21 @@ void (() => {
       promise_chain: Promise.resolve(),
       directory_promise: null
     }
+  }
+
+  // Serialize async operations by ID to prevent race conditions
+  function within_fiber(id, func) {
+    if (!within_fiber.chains) within_fiber.chains = {}
+    var prev = within_fiber.chains[id] || Promise.resolve()
+    var curr = prev.then(async () => {
+      try {
+        return await func()
+      } finally {
+        if (within_fiber.chains[id] === curr)
+          delete within_fiber.chains[id]
+      }
+    }).catch(e => console.error(`Error in fiber ${id}:`, e))
+    return within_fiber.chains[id] = curr
   }
 
   // -----------------------------------------------------------------------------
