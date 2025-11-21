@@ -1113,6 +1113,109 @@ async function runTest(testName, testFunction, expectedResult) {
     'ok'
   )
 
+  console.log('\nTesting read-only functionality...\n')
+
+  await runTest(
+    'check and set read-only status for file',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = url_file_db.get_canonical_path('/test/file.txt')
+      await db.write(key, 'test content')
+
+      // Initially should not be read-only
+      var initial_ro = await db.is_read_only(key)
+
+      // Set to read-only
+      var set_ro_result = await db.set_read_only(key, true)
+      var is_ro = await db.is_read_only(key)
+
+      // Set back to writable
+      var set_rw_result = await db.set_read_only(key, false)
+      var is_rw = await db.is_read_only(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return !initial_ro && set_ro_result && is_ro && set_rw_result && !is_rw ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'read-only status for non-existent file returns false',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = url_file_db.get_canonical_path('/nonexistent/file.txt')
+      var is_ro = await db.is_read_only(key)
+      var set_result = await db.set_read_only(key, true)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return !is_ro && !set_result ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'can write to and delete read-only files',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key = url_file_db.get_canonical_path('/test/protected.txt')
+      await db.write(key, 'original content')
+
+      // Set file as read-only
+      await db.set_read_only(key, true)
+      var is_ro_before = await db.is_read_only(key)
+
+      // Should still be able to write (sync algorithm requirement)
+      await db.write(key, 'updated content')
+      var content = await db.read(key)
+      var is_ro_after_write = await db.is_read_only(key)
+
+      // Should still be able to delete
+      var delete_result = await db.delete(key)
+      var read_after_delete = await db.read(key)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return is_ro_before && content.toString() === 'updated content' && is_ro_after_write && delete_result && read_after_delete === null ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'read-only status for directory (via index file)',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      var db = await url_file_db.create(db_test_dir, () => {})
+
+      var key_a = url_file_db.get_canonical_path('/a')
+      var key_ab = url_file_db.get_canonical_path('/a/b')
+
+      // Create /a as file, then /a/b to convert it to directory
+      await db.write(key_a, 'a content')
+      await db.write(key_ab, 'b content')
+
+      // Set directory /a as read-only (affects its index file)
+      var set_result = await db.set_read_only(key_a, true)
+      var is_ro = await db.is_read_only(key_a)
+
+      // Can still write to it
+      await db.write(key_a, 'updated a content')
+      var content = await db.read(key_a)
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+
+      return set_result && is_ro && content.toString() === 'updated a content' ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
   console.log(`\n${passed} passed, ${failed} failed`)
 
   if (failed === 0) {

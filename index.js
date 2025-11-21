@@ -207,6 +207,11 @@ void (() => {
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
           try {
+            // Temporarily remove read-only protection if needed for deletion
+            if (await is_read_only(fullpath)) {
+              await set_read_only(fullpath, false)
+            }
+
             // Remove node from parent's tree (only for files, not directories)
             if (!node.directory_promise && parent_node && last_component) {
               parent_node.component_to_node.delete(last_component)
@@ -308,16 +313,78 @@ void (() => {
 
         // Serialize on the node's promise chain
         return await (node.promise_chain = node.promise_chain.then(async () => {
+          // Temporarily remove read-only protection if needed for writing
+          var was_read_only = await is_read_only(fullpath)
+          if (was_read_only) {
+            await set_read_only(fullpath, false)
+          }
+
           // Mark as anticipated to suppress callback
           anticipated_events.add(canonical_path)
 
           await db._writeFile(fullpath, content)
+
+          // Restore read-only status if it was set before
+          if (was_read_only) {
+            await set_read_only(fullpath, true)
+          }
 
           // Remove from anticipated events after chokidar detection window
           setTimeout(() => {
             anticipated_events.delete(canonical_path)
           }, 1000)
         }))
+      }
+
+      // -------------------------------------------------------------------------
+      // db.is_read_only
+      // -------------------------------------------------------------------------
+
+      db.is_read_only = async path => {
+        var components = decode_path(path)
+        var node = root
+        var fullpath = base_dir
+
+        // Navigate to the target node
+        for (var component of components) {
+          node = node.component_to_node.get(component)
+          if (!node) return false
+          if (node.directory_promise) await node.directory_promise
+          fullpath += '/' + node.file_path_component
+        }
+
+        // Directories check the index file
+        if (node.directory_promise) fullpath += '/index'
+
+        return await is_read_only(fullpath)
+      }
+
+      // -------------------------------------------------------------------------
+      // db.set_read_only
+      // -------------------------------------------------------------------------
+
+      db.set_read_only = async (path, read_only) => {
+        var components = decode_path(path)
+        var node = root
+        var fullpath = base_dir
+
+        // Navigate to the target node
+        for (var component of components) {
+          node = node.component_to_node.get(component)
+          if (!node) return false
+          if (node.directory_promise) await node.directory_promise
+          fullpath += '/' + node.file_path_component
+        }
+
+        // Directories set the index file
+        if (node.directory_promise) fullpath += '/index'
+
+        try {
+          await set_read_only(fullpath, read_only)
+          return true
+        } catch (e) {
+          return false
+        }
       }
 
       return db
@@ -349,6 +416,37 @@ void (() => {
     var is_case_sensitive = !await exists(test_path.toUpperCase())
     await require('fs').promises.unlink(test_path)
     return is_case_sensitive
+  }
+
+  async function is_read_only(fullpath) {
+    try {
+      const stat = await require('fs').promises.stat(fullpath)
+      return require('os').platform() === "win32" ?
+        !!(stat.mode & 0x1) :
+        !(stat.mode & 0o200)
+    } catch (e) {
+      return false
+    }
+  }
+
+  async function set_read_only(fullpath, read_only) {
+    if (require('os').platform() === "win32") {
+      await new Promise((resolve, reject) => {
+        require("child_process").exec(`fsutil file setattr readonly "${fullpath}" ${!!read_only}`, (error) => error ? reject(error) : resolve())
+      })
+    } else {
+      let mode = (await require('fs').promises.stat(fullpath)).mode
+
+      // Check if chmod is actually needed
+      if (read_only && (mode & 0o222) === 0) return
+      if (!read_only && (mode & 0o200) !== 0) return
+
+      // Perform chmod only if necessary
+      if (read_only) mode &= ~0o222  // Remove all write permissions
+      else mode |= 0o200   // Add owner write permission
+
+      await require('fs').promises.chmod(fullpath, mode)
+    }
   }
 
   function create_node(file_path_component) {
