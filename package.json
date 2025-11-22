@@ -1,6 +1,6 @@
 {
   "name": "url-file-db",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "Maps web URLs to filesystem paths with encoding and normalization",
   "main": "index.js",
   "files": [

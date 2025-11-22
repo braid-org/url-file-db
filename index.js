@@ -207,6 +207,77 @@ void (() => {
       root.directory_promise = Promise.resolve()
 
       // -------------------------------------------------------------------------
+      // Helper function to ensure node exists in parent
+      // -------------------------------------------------------------------------
+
+      function ensure_node_exists(parent_node, file_path_component) {
+        var component = decode_component(file_path_component)
+
+        // Create node if it doesn't exist
+        if (!parent_node.component_to_node.has(component)) {
+          parent_node.component_to_node.set(component, create_node(file_path_component))
+        }
+
+        // Track case-insensitive mappings
+        if (!is_case_sensitive) {
+          var ifile_path_component = file_path_component.toLowerCase()
+          var icomponent = component.toLowerCase()
+
+          if (!parent_node.icomponent_to_ifile_path_components.has(icomponent)) {
+            parent_node.icomponent_to_ifile_path_components.set(icomponent, new Set())
+          }
+          parent_node.icomponent_to_ifile_path_components.get(icomponent).add(ifile_path_component)
+        }
+
+        return parent_node.component_to_node.get(component)
+      }
+
+      // -------------------------------------------------------------------------
+      // Scan existing files to rebuild node tree
+      // -------------------------------------------------------------------------
+
+      async function scan_existing_files() {
+        var fs_scan = require('fs')
+        var path_module = require('path')
+
+        async function scan_dir(dir_path, parent_node) {
+          try {
+            var entries = await fs_scan.promises.readdir(dir_path, { withFileTypes: true })
+
+            for (var entry of entries) {
+              var fullpath = path_module.join(dir_path, entry.name)
+
+              // Skip the meta directory
+              if (fullpath === meta_dir) continue
+
+              // Apply filter_cb if provided
+              if (filter_cb && !filter_cb(fullpath)) {
+                continue
+              }
+
+              var file_path_component = entry.name
+              var new_node = ensure_node_exists(parent_node, file_path_component)
+
+              // Mark as directory if it is one and recursively scan
+              if (entry.isDirectory()) {
+                new_node.directory_promise = Promise.resolve()
+                await scan_dir(fullpath, new_node)
+              }
+            }
+          } catch (e) {
+            if (e.code !== 'ENOENT') {
+              console.error('Error scanning directory:', e)
+            }
+          }
+        }
+
+        // Start scanning from base_dir
+        await scan_dir(base_dir, root)
+      }
+
+      await scan_existing_files()
+
+      // -------------------------------------------------------------------------
       // File Watcher
       // -------------------------------------------------------------------------
 
@@ -228,25 +299,7 @@ void (() => {
           var node = root
           for (var i = 0; i < file_path_components.length; i++) {
             var file_path_component = file_path_components[i]
-            var component = decode_component(file_path_component)
-
-            // Create node if it doesn't exist
-            if (!node.component_to_node.has(component)) {
-              node.component_to_node.set(component, create_node(file_path_component))
-            }
-
-            // Track case-insensitive mappings
-            if (!is_case_sensitive) {
-              var ifile_path_component = file_path_component.toLowerCase()
-              var icomponent = component.toLowerCase()
-
-              if (!node.icomponent_to_ifile_path_components.has(icomponent)) {
-                node.icomponent_to_ifile_path_components.set(icomponent, new Set())
-              }
-              node.icomponent_to_ifile_path_components.get(icomponent).add(ifile_path_component)
-            }
-
-            node = node.component_to_node.get(component)
+            node = ensure_node_exists(node, file_path_component)
             if (node.file_path_component !== file_path_component)
               throw new Error('Corruption detected - should never happen')
 

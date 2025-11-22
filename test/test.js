@@ -1576,6 +1576,49 @@ async function runTest(testName, testFunction, expectedResult) {
     'ok'
   )
 
+  await runTest(
+    'filter_cb filters files during initial scan',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+      await fs.promises.rm(db_test_dir + '-meta', { recursive: true, force: true })
+
+      // Create some files before creating the database
+      await fs.promises.mkdir(db_test_dir, { recursive: true })
+      await fs.promises.writeFile(db_test_dir + '/allowed.txt', 'allowed content')
+      await fs.promises.writeFile(db_test_dir + '/ignored.log', 'ignored content')
+      await fs.promises.mkdir(db_test_dir + '/subdir', { recursive: true })
+      await fs.promises.writeFile(db_test_dir + '/subdir/nested.txt', 'nested content')
+      await fs.promises.writeFile(db_test_dir + '/subdir/ignored.log', 'ignored nested')
+
+      // Create database with filter that ignores .log files
+      var db = await url_file_db.create(
+        db_test_dir,
+        db_test_dir + '-meta',
+        null, // no callback for this test
+        (fullpath) => !fullpath.endsWith('.log')
+      )
+
+      // Check that we can read the allowed files
+      var allowed_content = await db.read('/allowed.txt')
+      var nested_content = await db.read('/subdir/nested.txt')
+
+      // Check that we cannot read the ignored files (they weren't scanned)
+      var ignored_content = await db.read('/ignored.log')
+      var ignored_nested = await db.read('/subdir/ignored.log')
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+      await fs.promises.rm(db_test_dir + '-meta', { recursive: true, force: true })
+
+      // Should be able to read allowed files but not ignored ones
+      return allowed_content &&
+             nested_content &&
+             ignored_content === null &&
+             ignored_nested === null ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
   // Show summary with filter info if applicable
   var summary = `\n${passed} passed, ${failed} failed`
   if (filterArg) {
