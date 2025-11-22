@@ -988,7 +988,7 @@ async function runTest(testName, testFunction, expectedResult) {
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var received_keys = []
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (key) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, key) => {
         received_keys.push(key)
       })
 
@@ -1013,7 +1013,7 @@ async function runTest(testName, testFunction, expectedResult) {
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var received_keys = []
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (key) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, key) => {
         received_keys.push(key)
       })
 
@@ -1042,7 +1042,7 @@ async function runTest(testName, testFunction, expectedResult) {
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var received_keys = []
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (key) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, key) => {
         received_keys.push(key)
       })
 
@@ -1070,7 +1070,7 @@ async function runTest(testName, testFunction, expectedResult) {
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var received_keys = []
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (key) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, key) => {
         received_keys.push(key)
       })
 
@@ -1099,7 +1099,7 @@ async function runTest(testName, testFunction, expectedResult) {
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var received_keys = new Set()
-      await url_file_db.create(db_test_dir, db_test_dir + '-meta', (key) => {
+      await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, key) => {
         received_keys.add(key)
       })
 
@@ -1131,7 +1131,7 @@ async function runTest(testName, testFunction, expectedResult) {
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var received_keys = new Set()
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (key) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, key) => {
         received_keys.add(key)
       })
 
@@ -1156,7 +1156,7 @@ async function runTest(testName, testFunction, expectedResult) {
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var received_keys = new Set()
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (key) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, key) => {
         received_keys.add(key)
       })
 
@@ -1301,7 +1301,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var callback_count = 0
       var callback_paths = []
 
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (path) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, path) => {
         callback_count++
         callback_paths.push(path)
       })
@@ -1424,7 +1424,7 @@ async function runTest(testName, testFunction, expectedResult) {
       // Second instance - should load existing meta
       var callback_count = 0
       var callback_paths = []
-      var db2 = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (path) => {
+      var db2 = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, path) => {
         callback_count++
         callback_paths.push(path)
       })
@@ -1544,7 +1544,7 @@ async function runTest(testName, testFunction, expectedResult) {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var callback_paths = []
 
-      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (path) => {
+      var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', (_db, path) => {
         callback_paths.push(path)
       })
 
@@ -1572,6 +1572,50 @@ async function runTest(testName, testFunction, expectedResult) {
       return has_external &&
              first_callback_count === 1 &&
              second_callback_count === 2 ? 'ok' : 'failed'
+    },
+    'ok'
+  )
+
+  await runTest(
+    'callback can use db.read() during initial scan of existing files',
+    async () => {
+      var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+      await fs.promises.rm(db_test_dir + '-meta', { recursive: true, force: true })
+
+      // Create files BEFORE creating the database
+      await fs.promises.mkdir(db_test_dir, { recursive: true })
+      await fs.promises.writeFile(db_test_dir + '/existing1.txt', 'content1')
+      await fs.promises.writeFile(db_test_dir + '/existing2.txt', 'content2')
+
+      var callback_results = []
+
+      // Create database with callback that receives db as first parameter
+      await url_file_db.create(
+        db_test_dir,
+        db_test_dir + '-meta',
+        async (db, path) => {
+          // Callback is invoked during initial scan with db as first param
+          try {
+            var content = await db.read(path)
+            callback_results.push({ path, content: content ? content.toString() : null })
+          } catch (e) {
+            callback_results.push({ path, error: e.message })
+          }
+        }
+      )
+
+      // Wait a bit for callbacks to complete
+      await new Promise(resolve => setTimeout(resolve, 200))
+
+      await fs.promises.rm(db_test_dir, { recursive: true, force: true })
+      await fs.promises.rm(db_test_dir + '-meta', { recursive: true, force: true })
+
+      // Check if any callbacks had errors accessing db
+      var had_errors = callback_results.some(r => r.error)
+      var got_callbacks = callback_results.length >= 2
+
+      return !had_errors && got_callbacks ? 'ok' : 'failed'
     },
     'ok'
   )

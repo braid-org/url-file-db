@@ -322,7 +322,7 @@ void (() => {
                                      stats.mtimeNs > meta_mtime_ns
 
                 if (should_trigger) {
-                  if (cb) cb(canonical_path)
+                  if (cb) cb(db, canonical_path)
                   // Update the metadata with new mtime
                   await meta_storage.mark_as_seen(canonical_path, stats.mtimeNs)
                 }
@@ -335,25 +335,9 @@ void (() => {
         }
       }
 
-      // Create watcher and attach handlers before starting watch to avoid missing events
-      var chokidar = require('chokidar')
-      var c = new chokidar.FSWatcher({
-          useFsEvents: true,
-          usePolling: false,
-          // Ignore the meta directory to avoid infinite loops
-          ignored: meta_dir
-      })
-
-      // Attach event handlers before starting the watch
-      c.on('add', x => chokidar_handler(x, 'add'))
-      c.on('addDir', x => chokidar_handler(x, 'addDir'))
-      c.on('change', x => chokidar_handler(x, 'change'))
-      c.on('unlink', x => chokidar_handler(x, 'unlink'))
-      c.on('unlinkDir', x => chokidar_handler(x, 'unlinkDir'))
-
-      // Start watching and wait for initial scan to complete
-      c.add(base_dir)
-      await new Promise(resolve => c.on('ready', resolve))
+      // -------------------------------------------------------------------------
+      // Define db methods BEFORE starting chokidar so callbacks can use them
+      // -------------------------------------------------------------------------
 
       // -------------------------------------------------------------------------
       // db.read
@@ -647,6 +631,30 @@ void (() => {
 
       // Alias for list() to be more explicit
       db.get_all_meta_paths = db.list
+
+      // -------------------------------------------------------------------------
+      // Start chokidar watch AFTER db methods are defined
+      // -------------------------------------------------------------------------
+
+      // Create watcher and attach handlers before starting watch to avoid missing events
+      var chokidar = require('chokidar')
+      var c = new chokidar.FSWatcher({
+          useFsEvents: true,
+          usePolling: false,
+          // Ignore the meta directory to avoid infinite loops
+          ignored: meta_dir
+      })
+
+      // Attach event handlers before starting the watch
+      c.on('add', x => chokidar_handler(x, 'add'))
+      c.on('addDir', x => chokidar_handler(x, 'addDir'))
+      c.on('change', x => chokidar_handler(x, 'change'))
+      c.on('unlink', x => chokidar_handler(x, 'unlink'))
+      c.on('unlinkDir', x => chokidar_handler(x, 'unlinkDir'))
+
+      // Start watching and wait for initial scan to complete
+      c.add(base_dir)
+      await new Promise(resolve => c.on('ready', resolve))
 
       return db
     },
