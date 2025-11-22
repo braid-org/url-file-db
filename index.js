@@ -233,51 +233,6 @@ void (() => {
       }
 
       // -------------------------------------------------------------------------
-      // Scan existing files to rebuild node tree
-      // -------------------------------------------------------------------------
-
-      async function scan_existing_files() {
-        var fs_scan = require('fs')
-        var path_module = require('path')
-
-        async function scan_dir(dir_path, parent_node) {
-          try {
-            var entries = await fs_scan.promises.readdir(dir_path, { withFileTypes: true })
-
-            for (var entry of entries) {
-              var fullpath = path_module.join(dir_path, entry.name)
-
-              // Skip the meta directory
-              if (fullpath === meta_dir) continue
-
-              // Apply filter_cb if provided
-              if (filter_cb && !filter_cb(fullpath)) {
-                continue
-              }
-
-              var file_path_component = entry.name
-              var new_node = ensure_node_exists(parent_node, file_path_component)
-
-              // Mark as directory if it is one and recursively scan
-              if (entry.isDirectory()) {
-                new_node.directory_promise = Promise.resolve()
-                await scan_dir(fullpath, new_node)
-              }
-            }
-          } catch (e) {
-            if (e.code !== 'ENOENT') {
-              console.error('Error scanning directory:', e)
-            }
-          }
-        }
-
-        // Start scanning from base_dir
-        await scan_dir(base_dir, root)
-      }
-
-      await scan_existing_files()
-
-      // -------------------------------------------------------------------------
       // File Watcher
       // -------------------------------------------------------------------------
 
@@ -380,14 +335,25 @@ void (() => {
         }
       }
 
-      var c = require('chokidar').watch(base_dir, {
+      // Create watcher and attach handlers before starting watch to avoid missing events
+      var chokidar = require('chokidar')
+      var c = new chokidar.FSWatcher({
           useFsEvents: true,
           usePolling: false,
           // Ignore the meta directory to avoid infinite loops
           ignored: meta_dir
       })
-      for (let e of ['add', 'addDir', 'change', 'unlink', 'unlinkDir'])
-        c.on(e, x => chokidar_handler(x, e))
+
+      // Attach event handlers before starting the watch
+      c.on('add', x => chokidar_handler(x, 'add'))
+      c.on('addDir', x => chokidar_handler(x, 'addDir'))
+      c.on('change', x => chokidar_handler(x, 'change'))
+      c.on('unlink', x => chokidar_handler(x, 'unlink'))
+      c.on('unlinkDir', x => chokidar_handler(x, 'unlinkDir'))
+
+      // Start watching and wait for initial scan to complete
+      c.add(base_dir)
+      await new Promise(resolve => c.on('ready', resolve))
 
       // -------------------------------------------------------------------------
       // db.read
