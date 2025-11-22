@@ -136,7 +136,7 @@ The metadata storage (previously in meta.js) is now inline in index.js:
 #### File Operations
 - `db.read(canonical_path)` - Returns file contents or null
 - `db.write(canonical_path, content)` - Writes file, handling directory creation and file-to-directory conversion
-- `db.delete(canonical_path)` - Deletes file, returns true/false
+- `db.delete(canonical_path)` - Deletes file and its metadata, returns true/false
 
 #### Metadata Operations
 - `db.has(canonical_path)` - Checks if file has been seen before
@@ -144,7 +144,6 @@ The metadata storage (previously in meta.js) is now inline in index.js:
 - `db.get_meta(canonical_path)` - Gets metadata object for a path
 - `db.set_meta(canonical_path, meta)` - Sets complete metadata
 - `db.update_meta(canonical_path, updates)` - Updates specific metadata fields
-- `db.delete_meta(canonical_path)` - Removes metadata for a path
 
 #### Read-Only Operations
 - `db.is_read_only(canonical_path)` - Checks if file is marked read-only

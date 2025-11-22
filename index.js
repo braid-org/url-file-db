@@ -615,12 +615,6 @@ void (() => {
         await meta_storage.update(canonical_path, updates)
       }
 
-      // Delete metadata for a path
-      db.delete_meta = async (path) => {
-        var canonical_path = get_canonical_path(path)
-        await meta_storage.delete(canonical_path)
-      }
-
       // Check if database has this file (has seen it before)
       db.has = (path) => {
         var canonical_path = get_canonical_path(path)

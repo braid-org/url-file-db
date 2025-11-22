@@ -1382,7 +1382,7 @@ async function runTest(testName, testFunction, expectedResult) {
   )
 
   await runTest(
-    'meta data operations (get/set/update/delete)',
+    'meta data operations (get/set/update)',
     async () => {
       var db_test_dir = '/tmp/test-db-' + Math.random().toString(36).slice(2)
       var db = await url_file_db.create(db_test_dir, db_test_dir + '-meta', () => {})
@@ -1401,18 +1401,12 @@ async function runTest(testName, testFunction, expectedResult) {
       await db.update_meta('/file.txt', { foo: 'updated', new_field: 123 })
       var meta3 = db.get_meta('/file.txt')
 
-      // Delete meta
-      await db.delete_meta('/file.txt')
-      var meta4 = db.get_meta('/file.txt')
-      var has_after_delete = db.has('/file.txt')
-
       await fs.promises.rm(db_test_dir, { recursive: true, force: true })
       await fs.promises.rm(db_test_dir + '-meta', { recursive: true, force: true })
 
       return has_last_seen &&
              meta2.custom === 'value' && meta2.foo === 'bar' &&
-             meta3.custom === 'value' && meta3.foo === 'updated' && meta3.new_field === 123 &&
-             meta4 === undefined && !has_after_delete ? 'ok' : 'failed'
+             meta3.custom === 'value' && meta3.foo === 'updated' && meta3.new_field === 123 ? 'ok' : 'failed'
     },
     'ok'
   )

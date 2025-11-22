@@ -117,10 +117,6 @@ Sets the complete metadata object for a path.
 
 Updates specific fields in the metadata, merging with existing data.
 
-#### `db.delete_meta(canonical_path)`
-
-Deletes the metadata for a path.
-
 ### Read-Only Methods
 
 #### `db.is_read_only(canonical_path)`
