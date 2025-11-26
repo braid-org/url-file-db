@@ -307,7 +307,7 @@ void (() => {
           // Don't call callback if this event was anticipated from db.write
           if (!anticipated_events.has(canonical_path)) {
             // Serialize event handling per path to avoid duplicate callbacks
-            within_fiber(`chokidar:${fullpath}`, async () => {
+            within_fiber(`db:${canonical_path}`, async () => {
               try {
                 var stats = await require('fs').promises.stat(fullpath, { bigint: true })
                 var meta = meta_storage.get(canonical_path)
@@ -344,29 +344,30 @@ void (() => {
       // -------------------------------------------------------------------------
 
       db.read = async path => {
-        var components = decode_path(path)
-        var node = root
-        var fullpath = base_dir
+        var canonical_path = get_canonical_path(path)
 
-        // Navigate to the target node
-        for (var component of components) {
-          node = node.component_to_node.get(component)
-          if (!node) return null
-          if (node.directory_promise) await node.directory_promise
-          fullpath += '/' + node.file_path_component
-        }
+        return within_fiber(`db:${canonical_path}`, async () => {
+          var components = decode_path(path)
+          var node = root
+          var fullpath = base_dir
 
-        // Directories store content in index file
-        if (node.directory_promise) fullpath += '/index'
+          // Navigate to the target node
+          for (var component of components) {
+            node = node.component_to_node.get(component)
+            if (!node) return null
+            if (node.directory_promise) await node.directory_promise
+            fullpath += '/' + node.file_path_component
+          }
 
-        // Serialize on the node's promise chain
-        return await (node.promise_chain = node.promise_chain.then(async () => {
+          // Directories store content in index file
+          if (node.directory_promise) fullpath += '/index'
+
           try {
             return await db._readFile(fullpath)
           } catch (e) {
             return null
           }
-        }))
+        })
       }
 
       // -------------------------------------------------------------------------
@@ -374,33 +375,34 @@ void (() => {
       // -------------------------------------------------------------------------
 
       db.delete = async path => {
-        var components = decode_path(path)
+        var canonical_path = get_canonical_path(path)
 
-        var node = root
-        var fullpath = base_dir
-        var parent_node = null
-        var last_component = null
+        return within_fiber(`db:${canonical_path}`, async () => {
+          var components = decode_path(path)
 
-        // Navigate to the target node
-        for (var i = 0; i < components.length; i++) {
-          var component = components[i]
-          parent_node = node
-          last_component = component
-          node = node.component_to_node.get(component)
+          var node = root
+          var fullpath = base_dir
+          var parent_node = null
+          var last_component = null
 
-          if (!node) return false
+          // Navigate to the target node
+          for (var i = 0; i < components.length; i++) {
+            var component = components[i]
+            parent_node = node
+            last_component = component
+            node = node.component_to_node.get(component)
 
-          if (node.directory_promise) await node.directory_promise
-          fullpath += '/' + node.file_path_component
-        }
+            if (!node) return false
 
-        // Directories store content in index file
-        if (node.directory_promise) {
-          fullpath += '/index'
-        }
+            if (node.directory_promise) await node.directory_promise
+            fullpath += '/' + node.file_path_component
+          }
 
-        // Serialize on the node's promise chain
-        return await (node.promise_chain = node.promise_chain.then(async () => {
+          // Directories store content in index file
+          if (node.directory_promise) {
+            fullpath += '/index'
+          }
+
           try {
             // Temporarily remove read-only protection if needed for deletion
             if (await is_read_only(fullpath)) {
@@ -428,14 +430,13 @@ void (() => {
             await db._unlink(fullpath)
 
             // Delete metadata when file is deleted
-            var canonical_path = get_canonical_path(path)
             await meta_storage.delete(canonical_path)
 
             return true
           } catch (e) {
             return false
           }
-        }))
+        })
       }
 
       // -------------------------------------------------------------------------
@@ -443,76 +444,75 @@ void (() => {
       // -------------------------------------------------------------------------
 
       db.write = async (path, content) => {
-        var components = decode_path(path)
-        var canonical_path = get_canonical_path(path)  // Only needed for anticipated_events
-        var node = root
-        var fullpath = base_dir
+        var canonical_path = get_canonical_path(path)
 
-        // Build path and create missing directories/nodes
-        for (var i = 0; i < components.length; i++) {
-          var component = components[i]
+        return within_fiber(`db:${canonical_path}`, async () => {
+          var components = decode_path(path)
+          var node = root
+          var fullpath = base_dir
 
-          // Create new node if needed
-          if (!node.component_to_node.has(component)) {
-            var file_path_component = encode_file_path_component(component)
+          // Build path and create missing directories/nodes
+          for (var i = 0; i < components.length; i++) {
+            var component = components[i]
 
-            // Handle case collisions on case-insensitive filesystems
-            if (!is_case_sensitive) {
-              var icomponent = component.toLowerCase()
-              var ifile_path_components
+            // Create new node if needed
+            if (!node.component_to_node.has(component)) {
+              var file_path_component = encode_file_path_component(component)
 
-              if (node.icomponent_to_ifile_path_components.has(icomponent)) {
-                ifile_path_components = node.icomponent_to_ifile_path_components.get(icomponent)
-              } else {
-                ifile_path_components = new Set()
-                node.icomponent_to_ifile_path_components.set(icomponent, ifile_path_components)
+              // Handle case collisions on case-insensitive filesystems
+              if (!is_case_sensitive) {
+                var icomponent = component.toLowerCase()
+                var ifile_path_components
+
+                if (node.icomponent_to_ifile_path_components.has(icomponent)) {
+                  ifile_path_components = node.icomponent_to_ifile_path_components.get(icomponent)
+                } else {
+                  ifile_path_components = new Set()
+                  node.icomponent_to_ifile_path_components.set(icomponent, ifile_path_components)
+                }
+
+                file_path_component = encode_to_avoid_icase_collision(file_path_component, ifile_path_components)
+                ifile_path_components.add(file_path_component.toLowerCase())
               }
 
-              file_path_component = encode_to_avoid_icase_collision(file_path_component, ifile_path_components)
-              ifile_path_components.add(file_path_component.toLowerCase())
+              var new_node = create_node(file_path_component)
+              node.component_to_node.set(component, new_node)
+              fullpath += '/' + file_path_component
+
+              // Create directory on filesystem (for non-leaf nodes)
+              if (i < components.length - 1) {
+                new_node.directory_promise = db._mkdir(fullpath, { recursive: true })
+                await new_node.directory_promise
+              }
+
+              node = new_node
+            } else {
+              node = node.component_to_node.get(component)
+
+              // Convert file to directory if needed
+              if (i < components.length - 1 && !node.directory_promise) {
+                var dir_fullpath = fullpath + '/' + node.file_path_component
+                var convert_canonical = get_canonical_path(components.slice(0, i + 1).join('/'))
+
+                node.directory_promise = within_fiber(`db:${convert_canonical}`, async () => {
+                  // Read existing content, delete file, create directory, write to index
+                  var old_content = await db._readFile(dir_fullpath)
+                  await db._unlink(dir_fullpath)
+                  await db._mkdir(dir_fullpath, { recursive: true })
+                  await db._writeFile(dir_fullpath + '/index', old_content)
+                })
+
+                await node.directory_promise
+              }
+
+              if (node.directory_promise) await node.directory_promise
+              fullpath += '/' + node.file_path_component
             }
-
-            var new_node = create_node(file_path_component)
-            node.component_to_node.set(component, new_node)
-            fullpath += '/' + file_path_component
-
-            // Create directory on filesystem (for non-leaf nodes)
-            if (i < components.length - 1) {
-              new_node.directory_promise = db._mkdir(fullpath, { recursive: true })
-              await new_node.directory_promise
-            }
-
-            node = new_node
-          } else {
-            node = node.component_to_node.get(component)
-
-            // Convert file to directory if needed
-            if (i < components.length - 1 && !node.directory_promise) {
-              var dir_fullpath = fullpath + '/' + node.file_path_component
-              var convert_promise = (async () => {
-                await node.promise_chain
-
-                // Read existing content, delete file, create directory, write to index
-                var old_content = await db._readFile(dir_fullpath)
-                await db._unlink(dir_fullpath)
-                await db._mkdir(dir_fullpath, { recursive: true })
-                await db._writeFile(dir_fullpath + '/index', old_content)
-              })()
-
-              node.directory_promise = convert_promise
-              await node.directory_promise
-            }
-
-            if (node.directory_promise) await node.directory_promise
-            fullpath += '/' + node.file_path_component
           }
-        }
 
-        // Directories store content in index file
-        if (node.directory_promise) fullpath += '/index'
+          // Directories store content in index file
+          if (node.directory_promise) fullpath += '/index'
 
-        // Serialize on the node's promise chain
-        return await (node.promise_chain = node.promise_chain.then(async () => {
           // Temporarily remove read-only protection if needed for writing
           var was_read_only = await is_read_only(fullpath)
           if (was_read_only) {
@@ -542,7 +542,7 @@ void (() => {
           setTimeout(() => {
             anticipated_events.delete(canonical_path)
           }, 1000)
-        }))
+        })
       }
 
       // -------------------------------------------------------------------------
@@ -550,22 +550,26 @@ void (() => {
       // -------------------------------------------------------------------------
 
       db.is_read_only = async path => {
-        var components = decode_path(path)
-        var node = root
-        var fullpath = base_dir
+        var canonical_path = get_canonical_path(path)
 
-        // Navigate to the target node
-        for (var component of components) {
-          node = node.component_to_node.get(component)
-          if (!node) return false
-          if (node.directory_promise) await node.directory_promise
-          fullpath += '/' + node.file_path_component
-        }
+        return within_fiber(`db:${canonical_path}`, async () => {
+          var components = decode_path(path)
+          var node = root
+          var fullpath = base_dir
 
-        // Directories check the index file
-        if (node.directory_promise) fullpath += '/index'
+          // Navigate to the target node
+          for (var component of components) {
+            node = node.component_to_node.get(component)
+            if (!node) return false
+            if (node.directory_promise) await node.directory_promise
+            fullpath += '/' + node.file_path_component
+          }
 
-        return await is_read_only(fullpath)
+          // Directories check the index file
+          if (node.directory_promise) fullpath += '/index'
+
+          return await is_read_only(fullpath)
+        })
       }
 
       // -------------------------------------------------------------------------
@@ -573,27 +577,31 @@ void (() => {
       // -------------------------------------------------------------------------
 
       db.set_read_only = async (path, read_only) => {
-        var components = decode_path(path)
-        var node = root
-        var fullpath = base_dir
+        var canonical_path = get_canonical_path(path)
 
-        // Navigate to the target node
-        for (var component of components) {
-          node = node.component_to_node.get(component)
-          if (!node) return false
-          if (node.directory_promise) await node.directory_promise
-          fullpath += '/' + node.file_path_component
-        }
+        return within_fiber(`db:${canonical_path}`, async () => {
+          var components = decode_path(path)
+          var node = root
+          var fullpath = base_dir
 
-        // Directories set the index file
-        if (node.directory_promise) fullpath += '/index'
+          // Navigate to the target node
+          for (var component of components) {
+            node = node.component_to_node.get(component)
+            if (!node) return false
+            if (node.directory_promise) await node.directory_promise
+            fullpath += '/' + node.file_path_component
+          }
 
-        try {
-          await set_read_only(fullpath, read_only)
-          return true
-        } catch (e) {
-          return false
-        }
+          // Directories set the index file
+          if (node.directory_promise) fullpath += '/index'
+
+          try {
+            await set_read_only(fullpath, read_only)
+            return true
+          } catch (e) {
+            return false
+          }
+        })
       }
 
       // -------------------------------------------------------------------------
@@ -723,7 +731,6 @@ void (() => {
       file_path_component,
       component_to_node: new Map(),
       icomponent_to_ifile_path_components: new Map(),
-      promise_chain: Promise.resolve(),
       directory_promise: null
     }
   }
