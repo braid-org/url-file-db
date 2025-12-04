@@ -28,11 +28,14 @@ void (() => {
   // -----------------------------------------------------------------------------
 
   url_file_db = {
-    create: async (base_dir, meta_dir, cb, filter_cb) => {
+    create: async (base_dir, meta_dir, cb, filter_cb, options = {}) => {
       var db = {}
 
       base_dir = require('path').resolve(base_dir)
       meta_dir = require('path').resolve(meta_dir)
+
+      // Extract options with defaults
+      var stability_threshold = options.stability_threshold || 100
 
       // Bind filesystem operations
       var fs = require('fs').promises
@@ -200,7 +203,8 @@ void (() => {
 
       // Track canonical_paths with anticipated events from db.write operations
       // These events should not trigger the user callback
-      var anticipated_events = new Set()
+      // Uses reference counting to handle multiple rapid writes
+      var anticipated_events = new Map()
 
       // Initialize root node
       var root = create_node('/')
@@ -519,8 +523,8 @@ void (() => {
             await set_read_only(fullpath, false)
           }
 
-          // Mark as anticipated to suppress callback
-          anticipated_events.add(canonical_path)
+          // Mark as anticipated to suppress callback (increment reference count)
+          anticipated_events.set(canonical_path, (anticipated_events.get(canonical_path) || 0) + 1)
 
           await db._writeFile(fullpath, content)
 
@@ -538,10 +542,15 @@ void (() => {
             await set_read_only(fullpath, true)
           }
 
-          // Remove from anticipated events after chokidar detection window
+          // Remove from anticipated events after chokidar detection window (decrement reference count)
           setTimeout(() => {
-            anticipated_events.delete(canonical_path)
-          }, 1000)
+            var count = anticipated_events.get(canonical_path) || 0
+            if (count <= 1) {
+              anticipated_events.delete(canonical_path)
+            } else {
+              anticipated_events.set(canonical_path, count - 1)
+            }
+          }, stability_threshold)
         })
       }
 
@@ -647,8 +656,10 @@ void (() => {
       // Create watcher and attach handlers before starting watch to avoid missing events
       var chokidar = require('chokidar')
       var c = new chokidar.FSWatcher({
-          useFsEvents: true,
-          usePolling: false,
+          awaitWriteFinish: {
+            stabilityThreshold: stability_threshold,
+            pollInterval: 10
+          },
           // Ignore the meta directory to avoid infinite loops
           ignored: meta_dir
       })
