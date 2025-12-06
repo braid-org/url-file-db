@@ -50,11 +50,22 @@ Throughout the codebase, variables with an `i` prefix represent **case-insensiti
 
 This convention makes it immediately clear which variables are used for case-insensitive comparisons.
 
-## API Changes in v0.0.17
+## API Changes
 
-### Breaking Changes
+### v0.0.23+
 
-The `create` function signature has changed:
+The `create` function now accepts an `options` object as the fifth parameter:
+```javascript
+url_file_db.create(base_dir, meta_dir, callback?, filter_cb?, options?)
+```
+
+Options:
+- `stability_threshold` (default: 100ms) - Time to wait for file writes to stabilize before triggering events. Also used for chokidar's `awaitWriteFinish` and the anticipated events timeout.
+- `scan_interval_ms` (default: 20000ms) - Interval for periodic filesystem scanning to catch any changes chokidar might miss.
+
+### v0.0.17
+
+The `create` function signature changed:
 ```javascript
 // Old: url_file_db.create(base_dir, callback?, meta_dir?)
 // New: url_file_db.create(base_dir, meta_dir, callback?, filter_cb?)
@@ -63,12 +74,14 @@ The `create` function signature has changed:
 - `meta_dir` is now required and moved to second position
 - Added optional `filter_cb` for filtering file events
 
-### New Features
+### Features Added Over Time
 
 - **Metadata persistence**: Files are tracked across database restarts
 - **Read-only support**: Mark files as read-only while allowing programmatic writes
 - **Event filtering**: Filter which file events to process
 - **Improved serialization**: Uses `within_fiber` pattern throughout for better concurrency
+- **Anticipated events**: Reference-counted tracking of db.write operations to suppress duplicate callbacks
+- **Periodic scanning**: Fallback scanner catches any file changes that chokidar might miss
 
 ## Architecture
 
@@ -81,7 +94,6 @@ The database maintains an in-memory tree mirroring the filesystem:
   file_path_component: 'hello%20world',  // Encoded filesystem name
   component_to_node: Map,                 // Decoded component → child node
   icomponent_to_ifile_path_components: Map, // Lowercased component → Set of lowercased filesystem names
-  promise_chain: Promise,                 // Ensures sequential operations
   directory_promise: null | Promise       // null = file, Promise = directory
 }
 ```
@@ -97,11 +109,15 @@ This maintains the semantic equivalence of `/a` and `/a/index` while allowing ne
 
 ### Concurrency Management
 
-Each node has a `promise_chain` that serializes operations on that path. Write and delete operations are chained to prevent race conditions:
+All database operations are serialized per canonical path using `within_fiber`:
 
 ```javascript
-node.promise_chain = node.promise_chain.then(() => actual_operation())
+within_fiber(`db:${canonical_path}`, async () => {
+  // Operations on the same path are queued and executed sequentially
+})
 ```
+
+This ensures that concurrent reads, writes, and deletes to the same path don't cause race conditions.
 
 ### File Watching
 
@@ -111,6 +127,20 @@ Uses `chokidar` to watch the base directory for external changes. The `chokidar_
 - Uses `within_fiber` to serialize events per path, preventing duplicate callbacks
 - Supports optional `filter_cb` to skip certain files/events
 - Tracks file modification times using BigInt for nanosecond precision
+- Configured with `awaitWriteFinish` to wait for writes to stabilize before triggering events
+
+### Anticipated Events
+
+When `db.write` is called, the path is added to `anticipated_events` (a Map with reference counting) to suppress callbacks from chokidar or the scanner for that write. The reference count handles rapid successive writes to the same path. After `stability_threshold` milliseconds, the count is decremented.
+
+### Periodic Scanner
+
+A fallback scanner runs every `scan_interval_ms` to catch any file changes that chokidar might miss (rare edge cases on some filesystems). The scanner:
+- Recursively walks the directory tree
+- Compares file mtimes against stored metadata
+- Triggers callbacks for any files with newer mtimes
+- Respects `anticipated_events` to avoid duplicate callbacks
+- Respects `filter_cb` to skip certain files
 
 ### Meta Storage
 

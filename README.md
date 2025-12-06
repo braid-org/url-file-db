@@ -55,14 +55,17 @@ await db.delete(path)
 
 ## API
 
-### `url_file_db.create(base_dir, meta_dir, callback?, filter_cb?)`
+### `url_file_db.create(base_dir, meta_dir, callback?, filter_cb?, options?)`
 
 Creates a database instance watching the specified directory.
 
 - `base_dir` - Directory to store files (required)
 - `meta_dir` - Directory to store metadata (required)
-- `callback` - Optional function called when files change externally or are new
+- `callback` - Optional function `(db, canonical_path) => void` called when files change externally or are new
 - `filter_cb` - Optional function `(fullpath, event) => boolean` to filter which events to process
+- `options` - Optional configuration object:
+  - `stability_threshold` (default: 100) - Milliseconds to wait for file writes to stabilize before triggering events
+  - `scan_interval_ms` (default: 20000) - Milliseconds between periodic filesystem scans to catch any missed changes
 
 Returns a promise that resolves to a `db` object with methods for file operations and metadata management.
 
