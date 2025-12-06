@@ -36,6 +36,7 @@ void (() => {
 
       // Extract options with defaults
       var stability_threshold = options.stability_threshold || 100
+      var scan_interval_ms = options.scan_interval_ms || 20000  // Default 20 seconds
 
       // Bind filesystem operations
       var fs = require('fs').promises
@@ -310,33 +311,37 @@ void (() => {
 
           // Don't call callback if this event was anticipated from db.write
           if (!anticipated_events.has(canonical_path)) {
-            // Serialize event handling per path to avoid duplicate callbacks
-            within_fiber(`db:${canonical_path}`, async () => {
-              try {
-                var stats = await require('fs').promises.stat(fullpath, { bigint: true })
-                var meta = meta_storage.get(canonical_path)
-
-                // Trigger callback if:
-                // 1. Never seen before (no metadata)
-                // 2. File is newer than our last recorded mtime
-                // Compare as BigInt for accurate nanosecond comparison
-                var meta_mtime_ns = meta && meta.mtime_ns ? BigInt(meta.mtime_ns) : null
-                var should_trigger = !meta ||
-                                     !meta_mtime_ns ||
-                                     stats.mtimeNs > meta_mtime_ns
-
-                if (should_trigger) {
-                  if (cb) cb(db, canonical_path)
-                  // Update the metadata with new mtime
-                  await meta_storage.mark_as_seen(canonical_path, stats.mtimeNs)
-                }
-              } catch (e) {
-                // File was deleted, clean up metadata
-                await meta_storage.delete(canonical_path)
-              }
-            })
+            check_file_and_callback(fullpath, canonical_path)
           }
         }
+      }
+
+      // Shared logic for checking file mtime and triggering callback
+      function check_file_and_callback(fullpath, canonical_path) {
+        within_fiber(`db:${canonical_path}`, async () => {
+          try {
+            var stats = await require('fs').promises.stat(fullpath, { bigint: true })
+            var meta = meta_storage.get(canonical_path)
+
+            // Trigger callback if:
+            // 1. Never seen before (no metadata)
+            // 2. File is newer than our last recorded mtime
+            // Compare as BigInt for accurate nanosecond comparison
+            var meta_mtime_ns = meta && meta.mtime_ns ? BigInt(meta.mtime_ns) : null
+            var should_trigger = !meta ||
+                                 !meta_mtime_ns ||
+                                 stats.mtimeNs > meta_mtime_ns
+
+            if (should_trigger) {
+              if (cb) cb(db, canonical_path)
+              // Update the metadata with new mtime
+              await meta_storage.mark_as_seen(canonical_path, stats.mtimeNs)
+            }
+          } catch (e) {
+            // File was deleted, clean up metadata
+            await meta_storage.delete(canonical_path)
+          }
+        })
       }
 
       // -------------------------------------------------------------------------
@@ -674,6 +679,66 @@ void (() => {
       // Start watching and wait for initial scan to complete
       c.add(base_dir)
       await new Promise(resolve => c.on('ready', resolve))
+
+      // -------------------------------------------------------------------------
+      // Periodic scan to catch any changes chokidar might miss
+      // -------------------------------------------------------------------------
+
+      var scan_running = false
+      var scan_again = false
+      var scan_timeout = null
+
+      async function scan_files() {
+        scan_again = true
+        if (scan_running) return
+        if (scan_timeout) clearTimeout(scan_timeout)
+
+        scan_running = true
+        while (scan_again) {
+          scan_again = false
+          await scan_directory(base_dir)
+        }
+        scan_running = false
+
+        scan_timeout = setTimeout(scan_files, scan_interval_ms)
+      }
+
+      async function scan_directory(fullpath) {
+        // Skip the meta directory
+        if (fullpath === meta_dir) return
+
+        var file_path = fullpath.slice(base_dir.length)
+        if (filter_cb && file_path && !filter_cb(fullpath, 'scan')) return
+
+        try {
+          var stat = await require('fs').promises.stat(fullpath, { bigint: true })
+        } catch (e) {
+          return  // File/directory no longer exists
+        }
+
+        if (stat.isDirectory()) {
+          var entries = await require('fs').promises.readdir(fullpath)
+          for (var entry of entries) {
+            await scan_directory(fullpath + '/' + entry)
+          }
+        } else {
+          var canonical_path = get_canonical_path(file_path)
+
+          // Don't trigger callback if this is an anticipated event from db.write
+          if (anticipated_events.has(canonical_path)) return
+
+          var meta = meta_storage.get(canonical_path)
+          var meta_mtime_ns = meta && meta.mtime_ns ? BigInt(meta.mtime_ns) : null
+
+          // If mtime differs from what we recorded, trigger check
+          if (!meta_mtime_ns || stat.mtimeNs > meta_mtime_ns) {
+            check_file_and_callback(fullpath, canonical_path)
+          }
+        }
+      }
+
+      // Start the periodic scan after a short delay
+      scan_timeout = setTimeout(scan_files, scan_interval_ms)
 
       return db
     },
